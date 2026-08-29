@@ -22,6 +22,18 @@ frame whenever the canvas changes, then stitches them into a video.
    panel for Photoshop 2020, the `modern` one for 2021 and later. No manual
    folder copying.
 
+   **About ffmpeg**: exporting needs it, but it is no longer bundled — the
+   binary is 138 MB. The installer looks for one you already have (PATH,
+   winget, chocolatey, the usual folders) and uses it if found. Only when
+   there is none does it download the latest stable build from
+   [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds/releases),
+   verify its SHA-256, and place it in `%ProgramData%\F_Record\ffmpeg\`.
+
+   A failed download does not abort the install: the panel and the capture
+   plug-in go in as usual, exporting simply will not work, and the installer
+   says so. Install ffmpeg yourself and run the installer again. Pass
+   `-SkipFfmpeg` to keep it off the network entirely.
+
    To see what it would do, or to target one installation:
 
    ```bash
@@ -188,7 +200,11 @@ out any web page probing localhost.
 - **No longer needs the user to have Node.js installed.** 3.x spawned a worker
   with `spawn("node", ...)`, which only resolves if Node happens to be on PATH.
   Most Photoshop users do not have it, and export failed with a baffling
-  "Worker exited". It now runs the bundled ffmpeg directly.
+  "Worker exited". It now runs ffmpeg directly.
+- **ffmpeg is no longer bundled.** Shipping a 75 MB ffmpeg.exe made the
+  download almost entirely third-party binary for a plugin whose own code is
+  419 KB, and it is why this repository grew to 165 MB. The installer now finds
+  an existing ffmpeg, and downloads one only when there is none.
 - **One ffmpeg invocation** instead of four (main .ts + intro .ts + outro .ts +
   concat).
 - **Frames are no longer copied to a temp folder first**, halving disk I/O on

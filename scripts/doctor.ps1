@@ -98,6 +98,67 @@ foreach ($ps in $installations) {
     }
 }
 
+Write-Section 'ffmpeg (export)'
+
+# Mirrors the search order in cep/src/node/locate.ts. ffmpeg is no longer
+# shipped inside the package, so "export does nothing" is now most often just
+# "there is no ffmpeg on this machine" -- worth saying plainly.
+$ffmpegFound = $null
+$ffmpegVia = $null
+
+$overridePath = $env:F_RECORD_FFMPEG
+if ($overridePath -and (Test-Path -LiteralPath $overridePath)) {
+    $ffmpegFound = $overridePath
+    $ffmpegVia = 'F_RECORD_FFMPEG override'
+}
+
+if (-not $ffmpegFound) {
+    $shared = Join-Path $env:ProgramData 'F_Record\ffmpeg\ffmpeg.exe'
+    if (Test-Path -LiteralPath $shared) {
+        $ffmpegFound = $shared
+        $ffmpegVia = 'installed by install.ps1'
+    }
+}
+
+if (-not $ffmpegFound) {
+    $onPath = @(Get-Command 'ffmpeg.exe' -CommandType Application -ErrorAction SilentlyContinue)
+    if ($onPath.Count -gt 0) {
+        $ffmpegFound = $onPath[0].Source
+        $ffmpegVia = 'on PATH'
+    }
+}
+
+if (-not $ffmpegFound) {
+    $others = @()
+    if ($env:LOCALAPPDATA) { $others += (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links\ffmpeg.exe') }
+    if ($env:ProgramData)  { $others += (Join-Path $env:ProgramData 'chocolatey\bin\ffmpeg.exe') }
+    if ($env:ProgramFiles) { $others += (Join-Path $env:ProgramFiles 'ffmpeg\bin\ffmpeg.exe') }
+    $others += 'C:\ffmpeg\bin\ffmpeg.exe'
+    foreach ($candidate in $others) {
+        if (Test-Path -LiteralPath $candidate) {
+            $ffmpegFound = $candidate
+            $ffmpegVia = 'common install location'
+            break
+        }
+    }
+}
+
+if ($ffmpegFound) {
+    Write-Host ("  ffmpeg          {0}" -f $ffmpegFound) -ForegroundColor Green
+    Write-Host ("                  ({0})" -f $ffmpegVia) -ForegroundColor DarkGray
+    try {
+        $versionLine = (& $ffmpegFound -hide_banner -version 2>&1 | Select-Object -First 1)
+        Write-Host ("                  {0}" -f $versionLine) -ForegroundColor DarkGray
+    } catch {
+        Write-Host '                  ! found, but it would not run' -ForegroundColor Red
+    }
+} else {
+    Write-Host '  ffmpeg          not found' -ForegroundColor Yellow
+    Write-Host '                  Recording works; exporting a video does not.' -ForegroundColor Yellow
+    Write-Host '                  Run install.cmd again to fetch it, or install' -ForegroundColor Yellow
+    Write-Host '                  ffmpeg yourself and put it on PATH.' -ForegroundColor Yellow
+}
+
 Write-Section 'Capture engine'
 
 $dataDir = Join-Path $env:APPDATA 'F_Record'

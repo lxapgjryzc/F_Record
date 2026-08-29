@@ -1,5 +1,8 @@
 /**
- * Runs the bundled ffmpeg and turns its `-progress` stream into percentages.
+ * Runs ffmpeg and turns its `-progress` stream into percentages.
+ *
+ * The binary is no longer shipped inside the extension -- locate.ts says where
+ * it is looked for, scripts/install.ps1 is what puts it there.
  *
  * Deliberately no fluent-ffmpeg and no ffprobe: we know the output duration
  * before we start (we built the frame list), so probing is unnecessary, and
@@ -22,6 +25,7 @@ import {
     INTRO_SECONDS,
     OUTRO_SECONDS
 } from "./export";
+import { FFMPEG_ENV_VAR, ffmpegCandidates } from "./locate";
 import { exportTempDir } from "../../../shared/paths";
 import { mkdirp, rmrf, writeFileAtomic } from "../../../shared/compat";
 
@@ -54,10 +58,56 @@ export interface ExportHandle {
     cancel(): void;
 }
 
-/** Location of the ffmpeg binary shipped inside the extension. */
-export function ffmpegPath(): string {
-    const base = typeof __dirname === "string" ? __dirname : ".";
-    return path.resolve(base, "ffmpeg", process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg");
+export interface FfmpegLookup {
+    /** The binary that was found, or null when none of the candidates exist. */
+    path: string | null;
+    /** Everything that was tried, so a failure can say where it looked. */
+    searched: string[];
+}
+
+/**
+ * Finds ffmpeg on this machine.
+ *
+ * Returns the list it tried as well as the hit, because "ffmpeg is missing" is
+ * only actionable if the user can see which places were ruled out.
+ */
+export function locateFfmpeg(): FfmpegLookup {
+    const searched = ffmpegCandidates({
+        platform: process.platform,
+        extensionDir: typeof __dirname === "string" ? __dirname : ".",
+        env: process.env
+    });
+    for (let i = 0; i < searched.length; i++) {
+        try {
+            if (fs.existsSync(searched[i])) {
+                return { path: searched[i], searched: searched };
+            }
+        } catch (e) {
+            /* an unreadable PATH entry is not worth failing the whole export */
+        }
+    }
+    return { path: null, searched: searched };
+}
+
+/** The message shown when export cannot run because there is no ffmpeg. */
+export function missingFfmpegMessage(lookup: FfmpegLookup): string {
+    const shown = lookup.searched.slice(0, 6);
+    const lines = [
+        "ffmpeg was not found, so this recording cannot be exported.",
+        "",
+        "Run install.cmd from the scripts folder again to install it, or",
+        "install ffmpeg yourself and make sure it is on PATH. To point",
+        "F_Record at one specific binary, set " + FFMPEG_ENV_VAR + ".",
+        "",
+        "Looked in:"
+    ];
+    for (let i = 0; i < shown.length; i++) {
+        lines.push("  " + shown[i]);
+    }
+    if (lookup.searched.length > shown.length) {
+        lines.push("  ... and " + (lookup.searched.length - shown.length) + " more");
+    }
+    return lines.join("\n");
 }
 
 /**
@@ -95,11 +145,12 @@ export function runExport(
     let cancelled = false;
 
     const promise = new Promise<void>((resolve, reject) => {
-        const binary = ffmpegPath();
-        if (!fs.existsSync(binary)) {
-            reject(new Error("ffmpeg is missing from the extension folder: " + binary));
+        const lookup = locateFfmpeg();
+        if (lookup.path === null) {
+            reject(new Error(missingFfmpegMessage(lookup)));
             return;
         }
+        const binary = lookup.path;
 
         onProgress({ stage: "preparing", percent: 0 });
 

@@ -82,7 +82,8 @@ async function buildTestBundles() {
         encoder: "generator/src/encoder.ts",
         compat: "shared/compat.ts",
         paths: "shared/paths.ts",
-        exportPlan: "cep/src/node/export.ts"
+        exportPlan: "cep/src/node/export.ts",
+        locate: "cep/src/node/locate.ts"
     };
 
     for (const [name, entry] of Object.entries(entries)) {
@@ -201,22 +202,6 @@ const SHIPPED_SCRIPTS = [
     "doctor.ps1"
 ];
 
-/**
- * ffmpeg is shipped once at the root rather than inside each panel build:
- * the two builds are otherwise ~90 KB each, and duplicating a 76 MB binary
- * would double the download for no reason. install.ps1 places it into
- * whichever panel it installs.
- */
-function copyFfmpeg() {
-    const source = path.join(root, "cep/vendor/ffmpeg/ffmpeg.exe");
-    if (!fs.existsSync(source)) {
-        log("  ! cep/vendor/ffmpeg/ffmpeg.exe is missing -- export will not work in this build");
-        return;
-    }
-    copyFile(source, path.join(dist, "ffmpeg", "ffmpeg.exe"));
-    log("copied ffmpeg -> dist/ffmpeg (" + sizeOf(path.join(dist, "ffmpeg", "ffmpeg.exe")) + ")");
-}
-
 function copyScripts() {
     const out = path.join(dist, "scripts");
     rmrf(out);
@@ -271,7 +256,6 @@ async function main() {
     await buildGenerator();
     await buildPanel("legacy", "chrome61");
     await buildPanel("modern", "chrome74");
-    copyFfmpeg();
     copyScripts();
     await buildTestBundles();
 

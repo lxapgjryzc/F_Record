@@ -18,6 +18,16 @@
    安装脚本会自己找出机器上所有的 Photoshop，读出每一个的真实版本，然后装上对应的那份构建 ——
    PS 2020 用 legacy 版，2021 及以后用 modern 版。不需要你手动拷贝文件夹。
 
+   **关于 ffmpeg**：导出视频要用到 ffmpeg，但它不再塞在安装包里（那是个 138 MB 的文件）。
+   安装脚本会先在你机器上找 —— PATH、winget、chocolatey、常见目录都会看一遍 ——
+   找到就直接用；找不到才会从
+   [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds/releases)
+   下载最新的稳定版，校验 SHA-256 之后放到 `%ProgramData%\F_Record\ffmpeg\`。
+
+   下载失败（比如没网）不会让安装中断：面板和录制照常装好，只是导出用不了，
+   脚本会明确告诉你。你自己装好 ffmpeg 之后再跑一次安装脚本就行。
+   不想让它碰网络就加 `-SkipFfmpeg`。
+
    想指定某一个 Photoshop，或者先看看它打算做什么：
 
    ```bash
@@ -162,7 +172,10 @@ Photoshop 有个很老的 bug：另存为会把文档里的 `generatorSettings` 
 
 - **不再依赖用户装了 Node.js。** 3.x 用 `spawn("node", ...)` 起一个 worker ——
   只有恰好装了 Node 并且在 PATH 上才跑得通，大多数 PS 用户并没有装，
-  导出会以一句莫名其妙的 "Worker exited" 失败。现在直接调自带的 ffmpeg。
+  导出会以一句莫名其妙的 "Worker exited" 失败。现在直接调 ffmpeg。
+- **ffmpeg 不再塞进安装包。** 之前是把一个 75 MB 的 ffmpeg.exe 一起打包，
+  于是这个插件自己的代码只有 419 KB，下载包却几乎全是第三方二进制文件，
+  仓库也因此被撑到 165 MB。现在安装脚本先在机器上找，找不到才去下载一份。
 - **一次 ffmpeg 调用**代替原来的四趟（主视频 .ts + 片头 .ts + 片尾 .ts + concat）。
 - **不再把每一帧复制到临时目录**，直接从原位置读。长录制能省掉一半磁盘 IO。
 - 损坏的帧（比如崩溃时写了一半）会被跳过，而不是让整个导出失败。

@@ -4,3 +4,7 @@
 /node_modules/
 /package-lock.json
 *.zxp
+
+# ffmpeg is fetched by scripts/install.ps1, never committed. A 138 MB binary
+# in git history is exactly what made this repository 165 MB.
+/cep/vendor/
