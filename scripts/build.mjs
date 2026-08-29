@@ -100,6 +100,23 @@ async function buildTestBundles() {
     log("built test bundles -> dist/test");
 }
 
+/* ----------------------------------------------------------------- shared */
+
+/**
+ * Minified, but with names kept.
+ *
+ * `keepNames` costs a little size and buys back the thing this plugin actually
+ * depends on when something goes wrong: readable function names in stack
+ * traces. The whole design is "fail loudly" -- errors are surfaced in the panel
+ * and tailed by doctor.ps1 -- and a mangled trace would gut that. Whitespace
+ * and dead code are the parts worth dropping; identities are not.
+ */
+const MINIFY = {
+    minify: true,
+    keepNames: true,
+    legalComments: "none"
+};
+
 /* -------------------------------------------------------------- generator */
 
 /**
@@ -120,7 +137,7 @@ async function buildGenerator() {
         format: "cjs",
         target: "es2015",
         define: { __PLUGIN_VERSION__: JSON.stringify(VERSION) },
-        legalComments: "none",
+        ...MINIFY,
         logLevel: "warning"
     });
 
@@ -165,7 +182,7 @@ async function buildPanel(variant, target) {
         jsx: "automatic",
         jsxImportSource: "preact",
         define: { __PLUGIN_VERSION__: JSON.stringify(VERSION) },
-        legalComments: "none",
+        ...MINIFY,
         logLevel: "warning"
     });
 
