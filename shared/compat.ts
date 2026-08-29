@@ -1,0 +1,225 @@
+/**
+ * Filesystem helpers that behave identically from Node 6 up to Node 22.
+ *
+ * Photoshop hands us wildly different Node runtimes depending on the host:
+ * the CEP panel gets Node 8.6 (PS 2020) through 17.7 (PS 2024+), and the
+ * Generator process gets its own, separately-versioned Node. Anything newer
+ * than Node 8 has to be feature-detected rather than assumed -- the previous
+ * release called fs.rmSync (Node 14.14+) unconditionally, which made export
+ * throw outright on PS 2020 and PS 2021.
+ */
+
+import * as fs from "fs";
+import * as path from "path";
+import * as os from "os";
+
+const NODE_VERSION = (function (): [number, number] {
+    const raw = (typeof process !== "undefined" && process.versions && process.versions.node) || "0.0.0";
+    const parts = raw.split(".");
+    return [parseInt(parts[0], 10) || 0, parseInt(parts[1], 10) || 0];
+})();
+
+function nodeAtLeast(major: number, minor: number): boolean {
+    if (NODE_VERSION[0] !== major) {
+        return NODE_VERSION[0] > major;
+    }
+    return NODE_VERSION[1] >= minor;
+}
+
+const HAS_RECURSIVE_MKDIR = nodeAtLeast(10, 12);
+const HAS_RM = nodeAtLeast(14, 14);
+const HAS_RECURSIVE_RMDIR = nodeAtLeast(12, 10);
+
+export function exists(target: string): boolean {
+    try {
+        fs.statSync(target);
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+export function isDirectory(target: string): boolean {
+    try {
+        return fs.statSync(target).isDirectory();
+    } catch (e) {
+        return false;
+    }
+}
+
+/** Recursive mkdir that is a no-op when the directory already exists. */
+export function mkdirp(target: string): void {
+    if (HAS_RECURSIVE_MKDIR) {
+        fs.mkdirSync(target, { recursive: true } as any);
+        return;
+    }
+    // Node < 10.12: walk up until we find an existing ancestor, then descend.
+    const parent = path.dirname(target);
+    if (parent !== target && !exists(parent)) {
+        mkdirp(parent);
+    }
+    try {
+        fs.mkdirSync(target);
+    } catch (e) {
+        // EEXIST is fine; anything else is a real failure.
+        if (!exists(target)) {
+            throw e;
+        }
+    }
+}
+
+/** Recursive delete. Never throws when the target is already gone. */
+export function rmrf(target: string): void {
+    if (!exists(target)) {
+        return;
+    }
+    if (HAS_RM) {
+        fs.rmSync(target, { recursive: true, force: true } as any);
+        return;
+    }
+    if (HAS_RECURSIVE_RMDIR && isDirectory(target)) {
+        fs.rmdirSync(target, { recursive: true } as any);
+        return;
+    }
+    if (!isDirectory(target)) {
+        try {
+            fs.unlinkSync(target);
+        } catch (e) {
+            /* already gone */
+        }
+        return;
+    }
+    let entries: string[] = [];
+    try {
+        entries = fs.readdirSync(target);
+    } catch (e) {
+        return;
+    }
+    for (let i = 0; i < entries.length; i++) {
+        rmrf(path.join(target, entries[i]));
+    }
+    try {
+        fs.rmdirSync(target);
+    } catch (e) {
+        /* raced with another delete */
+    }
+}
+
+let atomicCounter = 0;
+
+/**
+ * Write-then-rename so a reader never observes a half-written file.
+ *
+ * Replaces the write-file-atomic dependency, which littered the data directory
+ * with `<name>.<pid><random>` temp files that the panel then had to sweep up.
+ * Temp files here live in the same directory (rename must not cross devices)
+ * but use a fixed, recognisable suffix and are removed on every failure path.
+ */
+export function writeFileAtomic(target: string, data: string | Buffer): void {
+    mkdirp(path.dirname(target));
+    atomicCounter = (atomicCounter + 1) % 0xffff;
+    const tmp = target + ".tmp-" + process.pid.toString(36) + "-" + atomicCounter.toString(36);
+    try {
+        fs.writeFileSync(tmp, data);
+        // renameSync overwrites an existing destination on POSIX, but on Windows
+        // it throws EPERM/EEXIST, so drop the old file first.
+        if (process.platform === "win32" && exists(target)) {
+            try {
+                fs.unlinkSync(target);
+            } catch (e) {
+                /* fall through to rename, which will report the real problem */
+            }
+        }
+        fs.renameSync(tmp, target);
+    } catch (e) {
+        try {
+            fs.unlinkSync(tmp);
+        } catch (e2) {
+            /* best effort */
+        }
+        throw e;
+    }
+}
+
+export function readJson<T>(target: string, fallback: T): T {
+    try {
+        const raw = fs.readFileSync(target, "utf8");
+        const parsed = JSON.parse(raw);
+        if (parsed === null || typeof parsed !== "object") {
+            return fallback;
+        }
+        return parsed as T;
+    } catch (e) {
+        return fallback;
+    }
+}
+
+export function writeJsonAtomic(target: string, value: unknown): void {
+    writeFileAtomic(target, JSON.stringify(value, null, 2));
+}
+
+/** Base directory for per-user application data. */
+export function getUserDataDir(): string {
+    if (process.platform === "win32") {
+        return process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
+    }
+    return path.join(os.homedir(), "Library", "Application Support");
+}
+
+/** `Object.assign` without relying on it existing (Node 6 has it; be explicit anyway). */
+export function assign<T>(target: T, ...sources: Array<Partial<T> | null | undefined>): T {
+    for (let i = 0; i < sources.length; i++) {
+        const source = sources[i];
+        if (!source) {
+            continue;
+        }
+        const keys = Object.keys(source);
+        for (let k = 0; k < keys.length; k++) {
+            (target as any)[keys[k]] = (source as any)[keys[k]];
+        }
+    }
+    return target;
+}
+
+export function pad(num: number, size: number): string {
+    let s = String(Math.floor(Math.abs(num)));
+    while (s.length < size) {
+        s = "0" + s;
+    }
+    return s;
+}
+
+/** Filesystem-safe `YYYY-MM-DD-HH-mm-ss-SSS`. */
+export function timeStampString(date?: Date): string {
+    const d = date || new Date();
+    return (
+        d.getFullYear() +
+        "-" + pad(d.getMonth() + 1, 2) +
+        "-" + pad(d.getDate(), 2) +
+        "-" + pad(d.getHours(), 2) +
+        "-" + pad(d.getMinutes(), 2) +
+        "-" + pad(d.getSeconds(), 2) +
+        "-" + pad(d.getMilliseconds(), 3)
+    );
+}
+
+export function randomHex(bytes: number): string {
+    let out = "";
+    for (let i = 0; i < bytes; i++) {
+        out += pad2Hex(Math.floor(Math.random() * 256));
+    }
+    return out;
+}
+
+function pad2Hex(n: number): string {
+    const s = n.toString(16);
+    return s.length === 1 ? "0" + s : s;
+}
+
+export const nodeVersionInfo = {
+    major: NODE_VERSION[0],
+    minor: NODE_VERSION[1],
+    hasRecursiveMkdir: HAS_RECURSIVE_MKDIR,
+    hasRm: HAS_RM,
+    hasRecursiveRmdir: HAS_RECURSIVE_RMDIR
+};

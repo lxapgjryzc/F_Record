@@ -1,0 +1,588 @@
+/*
+ * Panel styling.
+ *
+ * Baseline is Chromium 61 (Photoshop 2020 / CEP 9), so a few conveniences are
+ * off the table and are worked around deliberately:
+ *   - no flexbox `gap` (Chrome 84)      -> margins on children
+ *   - no `:focus-visible` (Chrome 86)   -> a .kbd class toggled from JS
+ *   - no `aspect-ratio` / `inset`       -> explicit sizing
+ * CSS custom properties are fine (Chrome 49) and carry the theme, which is
+ * read from Photoshop rather than guessed.
+ */
+
+:root {
+    --bg: #323232;
+    --bg-raised: #3a3a3a;
+    --bg-sunken: #2b2b2b;
+    --border: #1f1f1f;
+    --border-soft: #454545;
+    --text: #e8e8e8;
+    --text-dim: #9c9c9c;
+    --accent: #2680eb;
+    --accent-hover: #378ef0;
+    --danger: #e34850;
+    --warning: #e68619;
+    --success: #2d9d78;
+    --radius: 4px;
+    --row-height: 26px;
+}
+
+:root.light {
+    --bg: #f0f0f0;
+    --bg-raised: #fafafa;
+    --bg-sunken: #e4e4e4;
+    --border: #c8c8c8;
+    --border-soft: #d8d8d8;
+    --text: #202020;
+    --text-dim: #6b6b6b;
+    --accent: #1473e6;
+    --accent-hover: #0d66d0;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Adobe Clean", -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    font-size: 12px;
+    line-height: 1.45;
+    overflow: hidden;
+}
+
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+::-webkit-scrollbar-thumb {
+    background: var(--border-soft);
+    border-radius: 4px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+#panel {
+    height: 100%;
+}
+
+.app {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+/* ------------------------------------------------------------------ tabs */
+
+.tabs {
+    display: flex;
+    flex-direction: row;
+    border-bottom: 1px solid var(--border);
+    flex: 0 0 auto;
+}
+
+.tab {
+    flex: 1 1 0;
+    padding: 8px 4px;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-dim);
+    font: inherit;
+    cursor: pointer;
+    text-align: center;
+}
+
+.tab:hover {
+    color: var(--text);
+}
+
+.tab.active {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+}
+
+body.kbd .tab:focus {
+    outline: 1px solid var(--accent);
+    outline-offset: -2px;
+}
+
+/* ------------------------------------------------------------------ body */
+
+.body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 10px 12px 14px;
+}
+
+.section {
+    margin-bottom: 16px;
+}
+
+.section:last-child {
+    margin-bottom: 0;
+}
+
+.row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    min-height: var(--row-height);
+    margin-bottom: 6px;
+}
+
+.row:last-child {
+    margin-bottom: 0;
+}
+
+.row-label {
+    color: var(--text-dim);
+    margin-right: 8px;
+    flex: 0 1 auto;
+}
+
+.row-value {
+    flex: 0 0 auto;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.hint {
+    color: var(--text-dim);
+    font-size: 11px;
+    margin: 2px 0 8px;
+    line-height: 1.4;
+}
+
+.muted {
+    color: var(--text-dim);
+}
+
+/* --------------------------------------------------------------- banners */
+
+.banner {
+    display: flex;
+    flex-direction: column;
+    padding: 8px 10px;
+    border-radius: var(--radius);
+    margin-bottom: 12px;
+    border-left: 3px solid var(--border-soft);
+    background: var(--bg-sunken);
+}
+
+.banner-title {
+    font-weight: 600;
+    margin-bottom: 2px;
+}
+
+.banner-body {
+    color: var(--text-dim);
+    font-size: 11px;
+}
+
+.banner.warn {
+    border-left-color: var(--warning);
+}
+.banner.error {
+    border-left-color: var(--danger);
+}
+.banner.info {
+    border-left-color: var(--accent);
+}
+
+.banner-actions {
+    margin-top: 8px;
+}
+
+.banner-actions > * {
+    margin-right: 6px;
+}
+
+/* --------------------------------------------------------------- controls */
+
+button {
+    font: inherit;
+    color: var(--text);
+    background: var(--bg-raised);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius);
+    padding: 4px 12px;
+    min-height: var(--row-height);
+    cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+    background: var(--border-soft);
+}
+
+button:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+button:focus {
+    outline: none;
+}
+
+body.kbd button:focus,
+body.kbd select:focus {
+    outline: 1px solid var(--accent);
+    outline-offset: 1px;
+}
+
+button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+button.primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+}
+
+button.danger-text {
+    background: none;
+    border-color: transparent;
+    color: var(--danger);
+    padding: 2px 6px;
+}
+
+button.link {
+    background: none;
+    border: none;
+    color: var(--accent);
+    padding: 0;
+    min-height: 0;
+    text-decoration: underline;
+}
+
+button.icon {
+    padding: 2px 8px;
+    min-height: 22px;
+}
+
+select,
+input[type="text"] {
+    font: inherit;
+    color: var(--text);
+    background: var(--bg-sunken);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius);
+    padding: 3px 6px;
+    min-height: var(--row-height);
+    max-width: 100%;
+}
+
+select:focus,
+input[type="text"]:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+input[type="text"][readonly] {
+    color: var(--text-dim);
+}
+
+.control-narrow {
+    width: 118px;
+}
+
+.path-field {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin-right: 6px;
+}
+
+/* ---------------------------------------------------------------- switch */
+
+.switch {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    cursor: pointer;
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--text);
+    text-align: left;
+}
+
+.switch-track {
+    position: relative;
+    width: 32px;
+    height: 16px;
+    flex: 0 0 auto;
+    border-radius: 8px;
+    background: var(--border-soft);
+    margin-right: 8px;
+    transition: background 120ms ease;
+}
+
+.switch-knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 6px;
+    background: #fff;
+    transition: left 120ms ease;
+}
+
+.switch.on .switch-track {
+    background: var(--accent);
+}
+
+.switch.on .switch-knob {
+    left: 18px;
+}
+
+body.kbd .switch:focus .switch-track {
+    box-shadow: 0 0 0 2px var(--accent);
+}
+
+/* ------------------------------------------------------------ record head */
+
+.record-head {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px;
+    background: var(--bg-sunken);
+    border-radius: var(--radius);
+    margin-bottom: 14px;
+}
+
+.record-state {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+}
+
+.dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 4px;
+    background: var(--text-dim);
+    margin-right: 8px;
+    flex: 0 0 auto;
+}
+
+.dot.live {
+    background: var(--danger);
+    animation: pulse 1.6s ease-in-out infinite;
+}
+
+.dot.paused {
+    background: var(--warning);
+}
+
+.dot.ok {
+    background: var(--success);
+}
+
+@keyframes pulse {
+    0%,
+    100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.35;
+    }
+}
+
+/* ------------------------------------------------------------- session list */
+
+.session {
+    padding: 8px 10px;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius);
+    margin-bottom: 8px;
+    background: var(--bg-raised);
+}
+
+.session-title {
+    display: flex;
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 2px;
+}
+
+.session-name {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-right: 8px;
+}
+
+.session-meta {
+    color: var(--text-dim);
+    font-size: 11px;
+    margin-bottom: 6px;
+}
+
+.session-actions {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+}
+
+.session-actions > * {
+    margin-right: 6px;
+}
+
+.session-actions > *:last-child {
+    margin-right: 0;
+}
+
+.badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 8px;
+    font-size: 10px;
+    background: var(--danger);
+    color: #fff;
+    flex: 0 0 auto;
+}
+
+/* -------------------------------------------------------------- progress */
+
+.progress {
+    margin-top: 8px;
+}
+
+.progress-track {
+    height: 4px;
+    background: var(--bg-sunken);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: var(--accent);
+    transition: width 200ms ease;
+}
+
+.progress-label {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+}
+
+/* ---------------------------------------------------------------- dialog */
+
+.dialog-scrim {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    z-index: 10;
+}
+
+.dialog {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+    width: 100%;
+    max-width: 320px;
+    max-height: 100%;
+    overflow-y: auto;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+}
+
+.dialog-title {
+    font-weight: 600;
+    margin-bottom: 10px;
+}
+
+.dialog-actions {
+    display: flex;
+    flex-direction: row;
+    justify-content: flex-end;
+    margin-top: 14px;
+}
+
+.dialog-actions > * {
+    margin-left: 8px;
+}
+
+/* ----------------------------------------------------------------- toast */
+
+.toasts {
+    position: fixed;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    z-index: 20;
+}
+
+.toast {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 10px;
+    border-radius: var(--radius);
+    margin-top: 6px;
+    background: var(--bg-raised);
+    border-left: 3px solid var(--accent);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+
+.toast.negative {
+    border-left-color: var(--danger);
+}
+
+.toast.positive {
+    border-left-color: var(--success);
+}
+
+.toast-text {
+    flex: 1 1 auto;
+    margin-right: 8px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ---------------------------------------------------------------- footer */
+
+.footer {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    border-top: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 11px;
+}
+
+.empty {
+    text-align: center;
+    color: var(--text-dim);
+    padding: 28px 8px;
+}
