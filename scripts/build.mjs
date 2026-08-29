@@ -82,8 +82,11 @@ async function buildTestBundles() {
         encoder: "generator/src/encoder.ts",
         compat: "shared/compat.ts",
         paths: "shared/paths.ts",
+        protocol: "shared/protocol.ts",
         exportPlan: "cep/src/node/export.ts",
-        locate: "cep/src/node/locate.ts"
+        locate: "cep/src/node/locate.ts",
+        locales: "cep/src/app/locales/index.ts",
+        update: "generator/src/update.ts"
     };
 
     for (const [name, entry] of Object.entries(entries)) {
@@ -195,10 +198,20 @@ async function buildPanel(variant, target) {
     copyFile(path.join(root, "cep/src/index.html"), path.join(out, "index.html"));
     copyFile(path.join(root, "cep/src/host/init.jsx"), path.join(out, "host/init.jsx"));
     copyFile(path.join(root, "cep/src/js/CSInterface.js"), path.join(out, "js/CSInterface.js"));
-    copyFile(
-        path.join(root, "cep/src/CSXS/manifest." + variant + ".xml"),
-        path.join(out, "CSXS/manifest.xml")
-    );
+    // The manifest carries the version twice and CEP compares it against what
+    // is already installed, so a stale number there means an upgrade can be
+    // silently ignored. package.json is the single source of truth; stamp it in
+    // rather than trusting whoever last edited the XML to remember both places.
+    const manifestSource = path.join(root, "cep/src/CSXS/manifest." + variant + ".xml");
+    const manifest = fs
+        .readFileSync(manifestSource, "utf8")
+        .replace(/ExtensionBundleVersion="[^"]*"/, 'ExtensionBundleVersion="' + VERSION + '"')
+        .replace(
+            /(<Extension\s+Id="com\.F_know\.F_Record\.panel"\s+Version=")[^"]*(")/,
+            "$1" + VERSION + "$2"
+        );
+    mkdirp(path.join(out, "CSXS"));
+    fs.writeFileSync(path.join(out, "CSXS/manifest.xml"), manifest);
 
     log(
         "built cep-" + variant + " (" + target + ") -> dist/cep-" + variant +

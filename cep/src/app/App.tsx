@@ -1,9 +1,9 @@
 import { JSX } from "preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
-import { Config, SessionSummary, State } from "../../../shared/protocol";
+import { Config, ISSUES_URL, SessionSummary, State } from "../../../shared/protocol";
 import { BridgeClient, ConnectionStatus } from "./bridge";
 import { Translate, createTranslate } from "./i18n";
-import { Toast, Toasts } from "./components/ui";
+import { Banner, IssueButton, Toast, Toasts } from "./components/ui";
 import { Dashboard, ExportJob } from "./components/Dashboard";
 import { Sessions } from "./components/Sessions";
 import { Settings } from "./components/Settings";
@@ -15,6 +15,7 @@ import { mkdirp } from "../../../shared/compat";
 import {
     chooseSavePath,
     makePanelPersistent,
+    hostUiLocale,
     onThemeChanged,
     openInExplorer,
     openUrl,
@@ -43,12 +44,19 @@ export function App(): JSX.Element {
     const [toasts, setToasts] = useState<Toast[]>([]);
     const [pendingExport, setPendingExport] = useState<PendingExport | null>(null);
     const [exportJob, setExportJob] = useState<ExportJob | null>(null);
+    const [updateBusy, setUpdateBusy] = useState(false);
 
     const clientRef = useRef<BridgeClient | null>(null);
     const toastId = useRef(1);
 
-    const language = state ? state.config.language : "cn";
-    const t: Translate = createTranslate(language);
+    // Read once: Photoshop cannot change its UI language without restarting,
+    // and re-reading it on every render would mean a host call per frame.
+    const hostLocale = useRef<string | null>(null);
+    if (hostLocale.current === null) {
+        hostLocale.current = hostUiLocale() || "";
+    }
+    const language = state ? state.config.language : "auto";
+    const t: Translate = createTranslate(language, hostLocale.current);
 
     const pushToast = useCallback(
         (tone: Toast["tone"], text: string, actionLabel?: string, onAction?: () => void) => {
@@ -154,6 +162,28 @@ export function App(): JSX.Element {
         },
         [send, pushToast]
     );
+
+    /**
+     * The manual "check now" button.
+     *
+     * Says something either way: a check that silently does nothing when you
+     * are already up to date reads as a broken button.
+     */
+    const checkForUpdates = useCallback(() => {
+        setUpdateBusy(true);
+        send({ type: "checkUpdate" })
+            .then((result) => {
+                const outcome = result.updateCheck ? result.updateCheck.outcome : "failed";
+                if (outcome === "current") {
+                    pushToast("positive", t("update.upToDate"));
+                } else if (outcome === "failed") {
+                    pushToast("negative", t("update.failed"));
+                }
+                // "newer" needs no toast: the banner appears on its own.
+            })
+            .catch((error: Error) => pushToast("negative", error.message))
+            .then(() => setUpdateBusy(false));
+    }, [send, pushToast, t]);
 
     const refreshSessions = useCallback(() => {
         send({ type: "listSessions" })
@@ -284,6 +314,42 @@ export function App(): JSX.Element {
             </div>
 
             <div class="body">
+                {/*
+                  * Above the tab content rather than inside one tab: an update
+                  * is worth seeing wherever you are, but it is never urgent, so
+                  * it is a dismissable strip and not a dialog.
+                  */}
+                {state && state.update && !state.update.dismissed ? (
+                    <Banner
+                        tone="info"
+                        title={t("update.available", state.update.latestVersion)}
+                        body={t("update.body", state.generator.pluginVersion)}
+                        actions={
+                            <>
+                                <button
+                                    type="button"
+                                    class="link"
+                                    onClick={() => openUrl(state.update!.url || ISSUES_URL)}
+                                >
+                                    {t("update.view")}
+                                </button>
+                                <button
+                                    type="button"
+                                    class="link"
+                                    onClick={() => {
+                                        const version = state.update!.latestVersion;
+                                        send({ type: "dismissUpdate", version: version }).catch(
+                                            (e: Error) => pushToast("negative", e.message)
+                                        );
+                                    }}
+                                >
+                                    {t("common.dismiss")}
+                                </button>
+                            </>
+                        }
+                    />
+                ) : null}
+
                 {tab === "dashboard" ? (
                     <Dashboard
                         t={t}
@@ -353,6 +419,8 @@ export function App(): JSX.Element {
                         config={state ? state.config : null}
                         disabled={status !== "connected" || busy}
                         onPatch={patchConfig}
+                        updateBusy={updateBusy}
+                        onCheckUpdates={checkForUpdates}
                     />
                 ) : null}
             </div>
@@ -362,9 +430,11 @@ export function App(): JSX.Element {
                     {status === "connected" ? t("status.connected") : t("status." + statusKey(status))}
                     {state ? " · v" + state.generator.pluginVersion : ""}
                 </span>
-                <button type="button" class="link" onClick={() => openUrl("https://github.com/F-know/F_Record")}>
-                    GitHub
-                </button>
+                <IssueButton
+                    label={t("issue.report")}
+                    title={t("issue.hint")}
+                    onClick={() => openUrl(ISSUES_URL)}
+                />
             </div>
 
             {pendingExport ? (

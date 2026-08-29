@@ -1,6 +1,7 @@
 import { JSX } from "preact";
-import { Config, Resolution } from "../../../../shared/protocol";
+import { Config, LANGUAGES, Language, Resolution } from "../../../../shared/protocol";
 import { Translate } from "../i18n";
+import { LOCALE_NAMES, Locale } from "../locales";
 import { Hint, Row, Select, Switch } from "./ui";
 import { chooseFolder } from "../psHost";
 
@@ -9,6 +10,9 @@ export interface SettingsProps {
     config: Config | null;
     disabled: boolean;
     onPatch: (patch: Partial<Config>) => void;
+    /** Null while a check is running, so the button can show progress. */
+    updateBusy: boolean;
+    onCheckUpdates: () => void;
 }
 
 const RESOLUTIONS: Resolution[] = ["360", "720", "1080", "1440", "2160"];
@@ -140,13 +144,42 @@ export function Settings(props: SettingsProps): JSX.Element {
                         ariaLabel={t("settings.language")}
                         value={config.language}
                         disabled={props.disabled}
-                        options={[
-                            { value: "cn", label: "中文" },
-                            { value: "en", label: "English" }
-                        ]}
-                        onChange={(value) => props.onPatch({ language: value as "cn" | "en" })}
+                        // Each language is listed in itself -- someone who has
+                        // landed in the wrong one still has to find their way out.
+                        options={LANGUAGES.map((code) => ({
+                            value: code,
+                            label:
+                                code === "auto"
+                                    ? t("settings.language.auto")
+                                    : LOCALE_NAMES[code as Locale]
+                        }))}
+                        onChange={(value) => props.onPatch({ language: value as Language })}
                     />
                 </Row>
+            </div>
+
+            <div class="section">
+                <div class="row">
+                    <Switch
+                        checked={config.checkForUpdates}
+                        disabled={props.disabled}
+                        label={t("update.setting")}
+                        onChange={(next) => props.onPatch({ checkForUpdates: next })}
+                    />
+                </div>
+                <Hint>{t("update.setting.hint")}</Hint>
+                {config.checkForUpdates ? (
+                    <div class="row">
+                        <button
+                            type="button"
+                            class="secondary"
+                            disabled={props.disabled || props.updateBusy}
+                            onClick={props.onCheckUpdates}
+                        >
+                            {props.updateBusy ? t("update.checking") : t("update.checkNow")}
+                        </button>
+                    </div>
+                ) : null}
             </div>
         </div>
     );

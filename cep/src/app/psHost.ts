@@ -46,6 +46,21 @@ export function readHostTheme(): HostTheme {
     }
 }
 
+/**
+ * Photoshop's own UI language, e.g. "en_US", "zh_CN", "ja_JP".
+ *
+ * Drives the "Match Photoshop" language setting. Returns null when the host
+ * does not say, which resolveLocale treats as English.
+ */
+export function hostUiLocale(): string | null {
+    try {
+        const locale = csi().getHostEnvironment().appUILocale;
+        return typeof locale === "string" && locale.length > 0 ? locale : null;
+    } catch (e) {
+        return null;
+    }
+}
+
 export function onThemeChanged(handler: () => void): void {
     try {
         csi().addEventListener("com.adobe.csxs.events.ThemeColorChanged", handler);

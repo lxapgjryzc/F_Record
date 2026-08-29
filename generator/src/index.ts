@@ -45,6 +45,7 @@ import { CaptureScheduler, SchedulerStats } from "./capture";
 import { Bridge } from "./bridge";
 import { CoreLogger, Logger } from "./logger";
 import { computeMaxDimension, computePadding } from "./framing";
+import { UpdateChecker } from "./update";
 
 declare const __PLUGIN_VERSION__: string;
 const PLUGIN_VERSION = typeof __PLUGIN_VERSION__ !== "undefined" ? __PLUGIN_VERSION__ : "0.0.0-dev";
@@ -94,6 +95,7 @@ class FRecordPlugin {
     private readonly encoder: Encoder;
     private readonly scheduler: CaptureScheduler;
     private readonly bridge: Bridge;
+    private readonly updates: UpdateChecker;
     private readonly startedAt = Date.now();
 
     private activeDocumentId: number | null = null;
@@ -161,6 +163,16 @@ class FRecordPlugin {
             (command) => this.handleCommand(command),
             (level, message) => this.log.log(level, message)
         );
+
+        // Reads the live config on every call rather than capturing it, so
+        // switching the setting off takes effect without a restart.
+        this.updates = new UpdateChecker({
+            currentVersion: PLUGIN_VERSION,
+            isEnabled: () => this.configStore.get().checkForUpdates,
+            dismissedVersion: () => this.configStore.get().dismissedUpdateVersion,
+            onChange: () => this.broadcastState(),
+            log: (level, message) => this.log.log(level, message)
+        });
     }
 
     async start(): Promise<void> {
@@ -567,6 +579,9 @@ class FRecordPlugin {
                 this.syncActiveDocument().catch(() => {
                     /* logged inside */
                 });
+                // Piggybacks on the heartbeat rather than owning a timer. Returns
+                // immediately unless the user opted in and a day has passed.
+                this.updates.maybeCheck();
             }
         } catch (e) {
             this.log.error("Tick failed: " + errText(e));
@@ -637,7 +652,8 @@ class FRecordPlugin {
             document: document,
             session: sessionState,
             health: health,
-            resumeCandidates: session ? [] : this.resumeCandidates
+            resumeCandidates: session ? [] : this.resumeCandidates,
+            update: this.updates.getState()
         };
     }
 
@@ -670,6 +686,16 @@ class FRecordPlugin {
         if (after.enabled && !before.enabled) {
             this.scheduler.resume();
             this.needsResolve = true;
+        }
+        if (after.checkForUpdates !== before.checkForUpdates) {
+            // Switching it off must clear the banner, not just stop refreshing
+            // it. Switching it on checks once now rather than waiting a day.
+            this.updates.forget();
+            if (after.checkForUpdates) {
+                this.updates.check().catch(() => {
+                    /* check() never rejects */
+                });
+            }
         }
 
         await this.syncActiveDocument();
@@ -740,6 +766,22 @@ class FRecordPlugin {
                 this.scheduler.setEnabled(config.enabled && !this.docTooSmall);
                 this.broadcastState();
                 return { ok: true, state: this.buildState() };
+            }
+
+            case "dismissUpdate": {
+                // Recorded against the version, so a later release still shows.
+                this.configStore.update({ dismissedUpdateVersion: command.version });
+                this.broadcastState();
+                return { ok: true, state: this.buildState() };
+            }
+
+            case "checkUpdate": {
+                if (!config.checkForUpdates) {
+                    return { ok: false, error: "Update checks are switched off" };
+                }
+                const result = await this.updates.check();
+                this.broadcastState();
+                return { ok: true, state: this.buildState(), updateCheck: result };
             }
 
             default:

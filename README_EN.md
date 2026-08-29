@@ -85,6 +85,8 @@ be exported, not just the document currently open.
 | Resolution / Quality | Higher means a better final video and more disk used. Do not estimate disk usage from a blank canvas — JPEG size depends heavily on how busy the image is. |
 | Capture interval | The *shortest* gap between frames. It is a floor only: the real interval adapts to how long capture actually takes, so heavy documents are sampled less often. |
 | Idle timeout | Stops the clock after this long without drawing, so time-spent does not count staring at the screen. |
+| Language | Follows Photoshop by default; can be set by hand. See the language section below. |
+| Check for updates | **Off by default.** When on, asks GitHub about once a day whether a newer version exists. |
 
 ### Export
 
@@ -94,6 +96,43 @@ Two pacings:
 - **Real time** — uses the actual gaps between strokes, so pauses show (capped at
   2s per frame so it never stalls). This is possible because 4.0 records the
   capture time in each frame's filename.
+
+---
+
+## New in 4.1
+
+### The panel speaks ten languages
+
+It follows Photoshop's own UI language by default and falls back to English when
+that is something it does not ship. You can also pick one by hand:
+
+English · 简体中文 · 繁體中文 · 日本語 · 한국어 · Deutsch · Français · Español ·
+Português (Brasil) · Русский
+
+Regional variants resolve to the closest match: `zh_HK` and `zh_MO` get
+traditional Chinese, `zh_SG` gets simplified, `de_AT` / `fr_CA` / `es_MX` fall to
+de / fr / es, and `pt_PT` gets pt-BR. Anything unrecognised falls back to English
+rather than showing raw keys.
+
+> Everything except English and Chinese is machine-translated, checked only for
+> terminology and against the real Photoshop menu names. Corrections are very
+> welcome — open an issue, or edit the file under `cep/src/app/locales/`. One
+> file per language, and adding a new one touches no other code.
+
+### Update notices (off by default)
+
+When switched on, the plug-in asks GitHub about once a day whether a newer
+release exists and shows a strip at the top of the panel if so. Dismissing it
+silences that one version; the next release will still say something. Settings
+also has a "Check now" button.
+
+**It is off until you turn it on**, and nothing touches the network before then.
+Once on, it is a single unauthenticated GET of a public endpoint: nothing about
+you, your documents, or your usage is sent.
+
+### Report an Issue
+
+There is a button in the panel footer that opens the GitHub issue tracker.
 
 ---
 

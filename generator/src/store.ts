@@ -13,6 +13,7 @@ import {
     DEFAULT_CONFIG,
     Bounds,
     FrameFormat,
+    LANGUAGES,
     Resolution,
     SessionSummary
 } from "../../shared/protocol";
@@ -126,9 +127,22 @@ export function normalizeConfig(config: Config): Config {
     out.minIntervalMs = clampInt(out.minIntervalMs, 200, 60000, DEFAULT_CONFIG.minIntervalMs);
     out.minCanvasPixels = clampInt(out.minCanvasPixels, 0, 1e9, DEFAULT_CONFIG.minCanvasPixels);
 
-    if (out.language !== "cn" && out.language !== "en") {
+    // 4.0 stored "cn"/"en"; 4.1 uses BCP 47 tags so they can be matched against
+    // Photoshop's own appUILocale. Migrate rather than resetting, or every
+    // existing Chinese user would silently be moved to auto-detect.
+    const legacy = out.language as unknown as string;
+    if (legacy === "cn") {
+        out.language = "zh-CN";
+    }
+    if (LANGUAGES.indexOf(out.language) === -1) {
         out.language = DEFAULT_CONFIG.language;
     }
+
+    out.checkForUpdates = !!out.checkForUpdates;
+    if (typeof out.dismissedUpdateVersion !== "string" || out.dismissedUpdateVersion.length === 0) {
+        out.dismissedUpdateVersion = null;
+    }
+
     out.format = "jpg";
 
     if (typeof out.processImageFolderPath !== "string" || out.processImageFolderPath.length === 0) {

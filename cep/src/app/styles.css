@@ -270,6 +270,26 @@ button.icon {
     min-height: 22px;
 }
 
+/*
+ * Icon + label. Written with inline-block and a margin rather than flex `gap`,
+ * which needs Chromium 84 -- the legacy panel runs on 61. `vertical-align`
+ * does the centring that `align-items` would.
+ */
+button.link.with-icon {
+    display: inline-block;
+    text-decoration: none;
+}
+
+button.link.with-icon span {
+    text-decoration: underline;
+    vertical-align: middle;
+}
+
+button.link.with-icon .gh-icon {
+    vertical-align: middle;
+    margin-right: 5px;
+}
+
 select,
 input[type="text"] {
     font: inherit;

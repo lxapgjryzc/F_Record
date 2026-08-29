@@ -1,0 +1,122 @@
+/**
+ * 한국어. 메뉴 경로는 한국어판 Photoshop의 실제 표기를 따릅니다
+ * (편집 ▸ 환경 설정 ▸ 플러그인 ▸ 생성기 활성화).
+ */
+
+export const dict: Record<string, string> = {
+    "tab.dashboard": "기록",
+    "tab.sessions": "기록 목록",
+    "tab.settings": "설정",
+
+    "status.connected": "연결됨",
+    "status.connecting": "연결 중…",
+    "status.unavailable": "생성기가 실행되고 있지 않음",
+    "status.unavailable.hint":
+        "[편집 ▸ 환경 설정 ▸ 플러그인 ▸ 생성기 활성화]를 선택한 다음 Photoshop을 다시 시작하십시오.",
+    "status.mismatch": "버전 불일치",
+    "status.mismatch.hint": "패널과 생성기 플러그인의 버전이 다릅니다. 둘 다 다시 설치하십시오.",
+
+    "record.on": "기록 중",
+    "record.off": "기록하지 않음",
+    "record.paused": "일시 중지됨",
+    "record.start": "기록 시작",
+    "record.stop": "기록 중지",
+
+    "doc.title": "문서",
+    "doc.none": "열려 있는 문서 없음",
+    "doc.tooSmall": "캔버스가 너무 작아 기록하지 않음",
+    "doc.noSession": "이 문서는 기록되지 않음",
+    "doc.startForThis": "이 문서 기록",
+
+    "stat.frames": "프레임",
+    "stat.time": "작업 시간",
+    "stat.capture": "캡처",
+    "stat.interval": "{0}마다",
+    "stat.encoder.native": "Photoshop 인코더",
+    "stat.encoder.js": "대체 인코더",
+
+    "resume.title": "이전 기록을 이어서 할까요?",
+    "resume.body": "이 캔버스 크기가 이전 기록과 일치합니다. 이어서 기록하거나 새로 시작할 수 있습니다.",
+    "resume.continue": "이어서",
+    "resume.fresh": "새로 시작",
+    "resume.frames": "{0}개 프레임",
+
+    "export.button": "내보내기",
+    "export.title": "비디오 내보내기",
+    "export.aspect": "종횡비",
+    "export.aspect.canvas": "캔버스에 맞춤",
+    "export.duration": "길이",
+    "export.duration.original": "{0}(원본)",
+    "export.timing": "속도",
+    "export.timing.fixed": "일정하게",
+    "export.timing.realtime": "실제 속도",
+    "export.timing.hint":
+        "일정하게는 모든 프레임의 길이를 같게 합니다. 실제 속도는 획 사이의 간격을 그대로 사용하므로 멈춘 시간도 남습니다.",
+    "export.confirm": "내보내기",
+    "export.cancel": "취소",
+    "export.preparing": "프레임 확인 중…",
+    "export.encoding": "비디오 만드는 중…",
+    "export.finishing": "마무리 중…",
+    "export.started": "내보내기를 시작했습니다",
+    "export.done": "내보내기가 끝났습니다",
+    "export.failed": "내보내기에 실패했습니다",
+    "export.open": "열기",
+    "export.noFrames": "이 기록에는 아직 프레임이 없습니다",
+
+    "sessions.empty": "아직 기록이 없습니다",
+    "sessions.frames": "{0}개 프레임 · {1}",
+    "sessions.open": "폴더 열기",
+    "sessions.export": "내보내기",
+    "sessions.delete": "삭제",
+    "sessions.deleteConfirm": "이 기록과 모든 프레임을 삭제할까요? 되돌릴 수 없습니다.",
+    "sessions.current": "기록 중",
+    "sessions.refresh": "새로 고침",
+
+    "settings.folder": "프레임 폴더",
+    "settings.folder.choose": "폴더 선택",
+    "settings.folder.hint": "캡처한 프레임을 저장하는 위치입니다. 바꿔도 기존 기록은 옮겨지지 않습니다.",
+    "settings.resolution": "해상도",
+    "settings.quality": "품질",
+    "settings.quality.low": "낮음",
+    "settings.quality.medium": "중간",
+    "settings.quality.high": "높음",
+    "settings.interval": "캡처 간격",
+    "settings.interval.hint": "두 프레임 사이의 최소 간격입니다. 간격이 길수록 Photoshop에 부담이 적습니다.",
+    "settings.idle": "유휴 시간",
+    "settings.idle.hint": "이 시간 동안 그리지 않으면 시간 계산을 멈춥니다.",
+    "settings.idle.off": "안 함",
+    "settings.autoStart": "Photoshop을 열 때 기록 시작",
+    "settings.autoStart.hint": "기록은 백그라운드에서 실행되므로 이 패널을 열어 둘 필요가 없습니다.",
+    "settings.autoNew": "새 문서를 자동으로 기록",
+    "settings.autoNew.hint": "끄면 문서마다 직접 시작해야 합니다.",
+    "settings.language": "언어",
+    "settings.language.auto": "Photoshop 따르기",
+    "settings.about": "정보",
+
+    "update.setting": "업데이트 확인",
+    "update.setting.hint":
+        "새 버전이 있는지 하루에 한 번 정도 GitHub에 확인합니다. 기본값은 꺼짐입니다. 사용자나 작업에 관한 정보는 전송하지 않습니다.",
+    "update.checkNow": "지금 확인",
+    "update.checking": "확인 중…",
+    "update.upToDate": "최신 버전입니다",
+    "update.failed": "GitHub에 연결할 수 없습니다",
+    "update.available": "F_Record {0}이(가) 나왔습니다",
+    "update.body": "현재 버전은 {0}입니다.",
+    "update.view": "릴리스 보기",
+
+    "issue.report": "문제 보고",
+    "issue.hint": "GitHub의 문제 보고 페이지를 브라우저에서 엽니다.",
+
+    "unit.minute": "분",
+    "unit.second": "초",
+    "unit.hour": "시간",
+    "unit.minuteShort": "분",
+    "unit.secondShort": "초",
+    "unit.ms": "밀리초",
+
+    "common.details": "세부 정보",
+    "common.dismiss": "닫기",
+    "common.cancel": "취소",
+    "common.delete": "삭제",
+    "common.never": "안 함"
+};

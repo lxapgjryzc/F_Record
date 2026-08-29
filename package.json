@@ -1,6 +1,6 @@
 {
   "name": "f_record",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "description": "一款用来录制绘画过程的轻量级PS插件。A lightweight Photoshop plugin that records your drawing process.",
   "private": true,
   "scripts": {
@@ -12,14 +12,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/F-know/F_Record.git"
+    "url": "git+https://github.com/lxapgjryzc/F_Record.git"
   },
   "author": "F_know",
   "license": "GPL-3.0-only",
   "bugs": {
-    "url": "https://github.com/F-know/F_Record/issues"
+    "url": "https://github.com/lxapgjryzc/F_Record/issues"
   },
-  "homepage": "https://github.com/F-know/F_Record#readme",
+  "homepage": "https://github.com/lxapgjryzc/F_Record#readme",
   "dependencies": {
     "jpeg-js": "^0.4.4",
     "preact": "^10.19.3"
