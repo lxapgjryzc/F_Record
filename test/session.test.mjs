@@ -27,9 +27,14 @@ const BOUNDS = { top: 0, left: 0, right: 2000, bottom: 1500 };
 function makePhotoshop() {
     const stored = new Map();
     let active = null;
+    let writesFail = false;
     return {
         setActive(id) {
             active = id;
+        },
+        /** Photoshop refusing to store settings, e.g. while a dialog is up. */
+        setWritesFail(value) {
+            writesFail = value;
         },
         /** What Photoshop does to a document on Save As. */
         wipeSettings(id) {
@@ -51,6 +56,9 @@ function makePhotoshop() {
             async setActiveDocumentSettings(settings) {
                 if (active === null) {
                     throw new Error("no active document");
+                }
+                if (writesFail) {
+                    throw new Error("Photoshop rejected the write");
                 }
                 stored.set(active, settings);
             },
@@ -320,4 +328,31 @@ test("with creation disallowed and nothing matching, no folder is created", asyn
 
     assert.equal(outcome.session, null);
     assert.deepEqual(fs.readdirSync(s.config.processImageFolderPath), [], "nothing is written to disk");
+});
+
+test("a stamp Photoshop refused is not undone by the stale id left in the PSD", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    s.ps.setActive(1);
+    const first = await s.resolver.resolve({ id: 1, file: "C:\art\h.psd", bounds: BOUNDS }, s.config, true);
+    const oldId = first.session.sessionId;
+    writeFrames(s.config, oldId, 4);
+
+    // The user asks for a fresh recording, but Photoshop refuses the write, so
+    // the new id can only be queued.
+    s.ps.setWritesFail(true);
+    const fresh = await s.resolver.startFresh({ id: 1, file: "C:\art\h.psd", bounds: BOUNDS }, s.config);
+    assert.notEqual(fresh.sessionId, oldId, "a new session really was started");
+    assert.equal(s.ps.peek(1).sessionId, oldId, "precondition: the PSD still holds the old id");
+
+    // The next resync must not hand the document back to the old session just
+    // because that is what the PSD still says.
+    const again = await s.resolver.resolve({ id: 1, file: "C:\art\h.psd", bounds: BOUNDS }, s.config, true);
+    assert.equal(again.session.sessionId, fresh.sessionId, "the queued id wins over the stale PSD copy");
+
+    // Once Photoshop accepts writes again the document catches up.
+    s.ps.setWritesFail(false);
+    await s.resolver.flushPendingStamps();
+    assert.equal(s.ps.peek(1).sessionId, fresh.sessionId);
 });

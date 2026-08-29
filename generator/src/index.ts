@@ -303,8 +303,14 @@ class FRecordPlugin {
     }
 
     private onSave(): void {
-        // Photoshop clears generatorSettings on Save As. Repair immediately
-        // rather than waiting for the next capture.
+        // Photoshop clears generatorSettings on Save As. Put the id back now
+        // rather than leaving it to the debounced resync below, so a capture
+        // racing in between still resolves to the right session.
+        if (this.activeDocumentId !== null) {
+            this.resolver.repairAfterSave(this.activeDocumentId).catch((e) => {
+                this.log.warn("Could not repair the session id after save: " + errText(e));
+            });
+        }
         this.needsResolve = true;
         this.scheduleResync();
     }

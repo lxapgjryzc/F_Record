@@ -212,9 +212,17 @@ export class SessionResolver {
         let sessionId: string | null = null;
         let restamped = false;
 
-        // 1. The PSD's own copy.
+        // 1. The PSD's own copy -- unless a stamp for this document is still
+        //    queued. A pending stamp means we already know the right id and
+        //    merely could not write it yet, so whatever sits in the PSD is
+        //    stale; trusting it here would quietly revert the document to the
+        //    session it was attached to before.
         const stored = await this.readStoredSessionId(doc.id);
-        if (stored && this.sessionExists(config, stored)) {
+        const pending = this.pendingStamps[doc.id];
+        if (pending && pending !== stored && this.sessionExists(config, pending)) {
+            sessionId = pending;
+            restamped = await this.stamp(doc.id, pending);
+        } else if (stored && this.sessionExists(config, stored)) {
             sessionId = stored;
         }
 
