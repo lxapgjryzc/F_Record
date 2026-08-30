@@ -103,6 +103,25 @@ class FRecordPlugin {
     private docFile = "";
     private docPpi: number | undefined;
     private docTooSmall = false;
+    /**
+     * Bumped every time Photoshop reports new canvas bounds.
+     *
+     * A capture reads the bounds, then awaits a render that can take hundreds
+     * of milliseconds. Image Size or Canvas Size landing inside that window
+     * would leave the frame being padded against a canvas that no longer
+     * exists. Comparing this counter across the await catches that regardless
+     * of whether the debounced resync has caught up yet -- `docBounds` itself
+     * is not a reliable witness, because it is updated 150ms later.
+     */
+    private boundsGeneration = 0;
+    /**
+     * The generation `docBounds` was actually fetched for.
+     *
+     * Behind `boundsGeneration` means Photoshop has told us the canvas changed
+     * but the debounced resync has not read the new size yet -- so `docBounds`
+     * is known-stale and nothing may be captured against it.
+     */
+    private syncedBoundsGeneration = 0;
 
     private current: ResolvedSession | null = null;
     private resumeCandidates: SessionSummary[] = [];
@@ -285,6 +304,7 @@ class FRecordPlugin {
                 this.scheduleResync();
             }
             if (event.bounds) {
+                this.boundsGeneration++;
                 this.needsResolve = true;
                 this.scheduleResync();
             }
@@ -398,6 +418,10 @@ class FRecordPlugin {
         this.resyncInFlight = true;
         try {
             let info: any;
+            // Read before the call, not after: anything Photoshop reports while
+            // this is in flight is newer than what comes back, and marking it
+            // as synced would hide a resize we have not actually seen yet.
+            const generation = this.boundsGeneration;
             try {
                 info = await this.generator.getDocumentInfo(
                     this.activeDocumentId === null ? undefined : this.activeDocumentId,
@@ -421,6 +445,7 @@ class FRecordPlugin {
                 this.needsResolve = true;
             }
             this.docBounds = info.bounds || null;
+            this.syncedBoundsGeneration = generation;
             this.docFile = typeof info.file === "string" ? info.file : "";
             this.docPpi = typeof info.resolution === "number" ? info.resolution : undefined;
 
@@ -483,6 +508,16 @@ class FRecordPlugin {
             return;
         }
 
+        // Photoshop has reported a resize the debounced resync has not read
+        // yet, so `bounds` describes a canvas that no longer exists. Capturing
+        // now would pad the frame to the old size. Wait for the resync and let
+        // it come round again; the pending change is re-armed below.
+        const generation = this.boundsGeneration;
+        if (this.syncedBoundsGeneration !== generation) {
+            this.scheduler.notifyChange();
+            return;
+        }
+
         const maxDimension = computeMaxDimension(bounds, config.resolution);
 
         // One pixmap call. `clipToDocumentBounds` keeps Photoshop from sending
@@ -499,6 +534,18 @@ class FRecordPlugin {
         }
         // Recording may have been switched off while Photoshop was rendering.
         if (!this.configStore.get().enabled || this.current !== session) {
+            return;
+        }
+        // The canvas may also have been resized while it rendered. `bounds` is
+        // then the canvas as it was, and padding computed from it would strand
+        // the new image in the corner of a frame the old size -- a 400x300
+        // drawing marooned in 1600x1200 of white. The pixmap alone cannot say
+        // what the new canvas is, since it only covers the painted region, so
+        // drop this frame and take another with bounds that agree. One frame
+        // costs nothing; a visibly broken one is in the video forever.
+        if (this.boundsGeneration !== generation) {
+            this.log.info("Canvas was resized mid-capture; retaking the frame");
+            this.scheduler.notifyChange();
             return;
         }
 

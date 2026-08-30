@@ -1,6 +1,6 @@
 {
   "name": "f_record",
-  "version": "4.1.0",
+  "version": "4.1.1",
   "description": "一款用来录制绘画过程的轻量级PS插件。A lightweight Photoshop plugin that records your drawing process.",
   "private": true,
   "scripts": {
