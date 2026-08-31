@@ -130,6 +130,15 @@ class FRecordPlugin {
 
     private lastFrameAt: number | null = null;
     private photoshopVersion: string | null = null;
+    /**
+     * Session the capture geometry has already been logged for.
+     *
+     * Which coordinate space Photoshop reports `pixmap.bounds` in decides how
+     * every frame is padded, and it is not the same across versions. One line
+     * per session makes it something the log can be read for instead of
+     * something to be worked out backwards from a broken frame.
+     */
+    private loggedGeometryFor: string | null = null;
 
     private resyncTimer: any = null;
     private manifestTimer: any = null;
@@ -409,6 +418,7 @@ class FRecordPlugin {
         this.resolvedForDocId = null;
         this.needsResolve = true;
         this.lastFrameAt = null;
+        this.loggedGeometryFor = null;
         this.scheduler.discardPending();
         this.scheduler.setEnabled(false);
         this.broadcastState();
@@ -552,7 +562,16 @@ class FRecordPlugin {
             return;
         }
 
-        const padding = computePadding(bounds, pixmap.bounds, pixmap.width, pixmap.height);
+        if (this.loggedGeometryFor !== session.sessionId) {
+            this.loggedGeometryFor = session.sessionId;
+            this.log.info(
+                "Capture geometry: canvas " + describeBounds(bounds) + ", asked for max " + maxDimension +
+                    ", got " + pixmap.width + "x" + pixmap.height + " with bounds " +
+                    describeBounds(pixmap.bounds)
+            );
+        }
+
+        const padding = computePadding(bounds, pixmap.bounds, pixmap.width, pixmap.height, maxDimension);
         const at = Date.now();
         const seq = session.manifest.nextSeq;
         const target = path.join(session.folder, frameFileName(seq, at, config.format));
@@ -837,6 +856,13 @@ class FRecordPlugin {
                 return { ok: false, error: "Unknown command" };
         }
     }
+}
+
+function describeBounds(b: Bounds | null | undefined): string {
+    if (!b) {
+        return "none";
+    }
+    return b.left + "," + b.top + " " + (b.right - b.left) + "x" + (b.bottom - b.top);
 }
 
 function someLayerHasPixels(layers: any[]): boolean {
