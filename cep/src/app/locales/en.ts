@@ -70,6 +70,8 @@ export const dict: Record<string, string> = {
     "sessions.export": "Export",
     "sessions.delete": "Delete",
     "sessions.deleteConfirm": "Delete this recording and all its frames? This cannot be undone.",
+    "sessions.deleteRestartConfirm":
+        "This recording is running right now. Delete it and all its frames, then start a new one? This cannot be undone.",
     "sessions.current": "recording now",
     "sessions.refresh": "Refresh",
 

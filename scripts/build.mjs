@@ -278,6 +278,10 @@ function writeZip() {
 
 async function main() {
     if (testsOnly) {
+        // The generator bundle too, not just dist/test: integration.test.mjs
+        // drives the exact file that ships, and building only the test bundles
+        // left it asserting against whatever the last full build produced.
+        await buildGenerator();
         await buildTestBundles();
         return;
     }

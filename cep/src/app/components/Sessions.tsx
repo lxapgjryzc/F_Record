@@ -85,10 +85,17 @@ export function Sessions(props: SessionsProps): JSX.Element {
                             >
                                 {t("sessions.open")}
                             </button>
+                            {/*
+                              * Deleting the take you are in the middle of is
+                              * the whole reason to delete one mid-session:
+                              * it went wrong and you want to start over. The
+                              * generator empties the folder and opens a fresh
+                              * recording for the same document.
+                              */}
                             <button
                                 type="button"
                                 class="danger-text"
-                                disabled={props.busy || isCurrent}
+                                disabled={props.busy}
                                 onClick={() => props.onDelete(session)}
                             >
                                 {t("sessions.delete")}

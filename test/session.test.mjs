@@ -26,11 +26,20 @@ const BOUNDS = { top: 0, left: 0, right: 2000, bottom: 1500 };
 /** Stand-in for Photoshop's generatorSettings storage. */
 function makePhotoshop() {
     const stored = new Map();
+    const open = new Set();
     let active = null;
     let writesFail = false;
     return {
         setActive(id) {
             active = id;
+            open.add(id);
+        },
+        /** Photoshop closing a document, with or without telling us. */
+        close(id) {
+            open.delete(id);
+            if (active === id) {
+                active = null;
+            }
         },
         /** Photoshop refusing to store settings, e.g. while a dialog is up. */
         setWritesFail(value) {
@@ -64,6 +73,9 @@ function makePhotoshop() {
             },
             getActiveDocumentId() {
                 return active;
+            },
+            async isDocumentOpen(documentId) {
+                return open.has(documentId);
             }
         }
     };
@@ -252,6 +264,10 @@ test("adopting a candidate attaches it and stamps the document", async (t) => {
     const first = await s.resolver.resolve({ id: 1, file: "C:\\art\\d.psd", bounds: BOUNDS }, s.config, true);
     writeFrames(s.config, first.session.sessionId, 4);
 
+    // The panel only offers a session no open document is using, which is
+    // what closing document 1 makes true here.
+    s.ps.close(1);
+    s.resolver.forgetDocument(1);
     s.ps.setActive(2);
     const adopted = await s.resolver.adopt(
         { id: 2, file: "Untitled-3", bounds: BOUNDS },
@@ -355,4 +371,99 @@ test("a stamp Photoshop refused is not undone by the stale id left in the PSD", 
     s.ps.setWritesFail(false);
     await s.resolver.flushPendingStamps();
     assert.equal(s.ps.peek(1).sessionId, fresh.sessionId);
+});
+
+test("reopening the file a Save As branched from keeps the two drawings apart", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    // Save As is also how an artist forks a drawing: work up to a point in
+    // a.psd, save it as b.psd, and carry on down one path.
+    s.ps.setActive(1);
+    const original = await s.resolver.resolve(
+        { id: 1, file: "C:\art\a.psd", bounds: BOUNDS },
+        s.config,
+        true
+    );
+    const sessionId = original.session.sessionId;
+    writeFrames(s.config, sessionId, 20);
+    // What a.psd carries on disk: the id it was stamped with before the fork.
+    const stampedIntoTheFile = s.ps.peek(1);
+
+    s.ps.wipeSettings(1);
+    const branchB = await s.resolver.resolve(
+        { id: 1, file: "C:\art\b.psd", bounds: BOUNDS },
+        s.config,
+        true
+    );
+    assert.equal(branchB.session.sessionId, sessionId, "the open document keeps the recording");
+
+    // Now the artist reopens a.psd to try the other path. It arrives holding
+    // the same session id as the document already recording into it.
+    s.ps.setActive(2);
+    await s.ps.gateway.setActiveDocumentSettings(stampedIntoTheFile);
+    const branchA = await s.resolver.resolve(
+        { id: 2, file: "C:\art\a.psd", bounds: BOUNDS },
+        s.config,
+        true
+    );
+
+    assert.notEqual(branchA.session.sessionId, sessionId, "the fork records on its own");
+    assert.equal(branchA.session.isNew, true);
+    assert.equal(branchA.session.manifest.frameCount, 0);
+    assert.equal(s.ps.peek(2).sessionId, branchA.session.sessionId, "and the reopened file is restamped");
+
+    // Without this, both documents write frames into one folder and the export
+    // interleaves two different drawings into a single video.
+    assert.equal(
+        fs.readdirSync(original.session.folder).filter((f) => f.endsWith(".jpg")).length,
+        20,
+        "the first branch keeps its frames, and gains none from the second"
+    );
+});
+
+test("a document Photoshop closed without telling us does not cost the recording", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    s.ps.setActive(1);
+    const first = await s.resolver.resolve(
+        { id: 1, file: "C:\art\i.psd", bounds: BOUNDS },
+        s.config,
+        true
+    );
+    writeFrames(s.config, first.session.sessionId, 6);
+
+    // The document is gone but no close event reached us, so the map still
+    // says document 1 owns the session. Splitting the recording on the
+    // strength of that alone would be the very bug this module exists to stop.
+    s.ps.close(1);
+    s.ps.setActive(2);
+    await s.ps.gateway.setActiveDocumentSettings(s.ps.peek(1));
+
+    const again = await s.resolver.resolve(
+        { id: 2, file: "C:\art\i.psd", bounds: BOUNDS },
+        s.config,
+        true
+    );
+    assert.equal(again.session.sessionId, first.session.sessionId, "the reopened file carries on");
+    assert.equal(again.session.manifest.frameCount, 6);
+});
+
+test("a session another open document is recording cannot be adopted", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    s.ps.setActive(1);
+    const first = await s.resolver.resolve(
+        { id: 1, file: "C:\art\j.psd", bounds: BOUNDS },
+        s.config,
+        true
+    );
+
+    s.ps.setActive(2);
+    await assert.rejects(
+        () => s.resolver.adopt({ id: 2, file: "Untitled-8", bounds: BOUNDS }, s.config, first.session.sessionId),
+        /another open document/
+    );
 });

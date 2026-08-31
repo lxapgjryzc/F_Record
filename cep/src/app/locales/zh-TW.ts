@@ -62,6 +62,7 @@ export const dict: Record<string, string> = {
     "sessions.export": "轉存",
     "sessions.delete": "刪除",
     "sessions.deleteConfirm": "刪除這段錄製和它的全部影格？此動作無法復原。",
+    "sessions.deleteRestartConfirm": "這段錄製正在進行中。刪除它和它的全部過程圖，然後重新開始錄製？此操作不可復原。",
     "sessions.current": "正在錄製",
     "sessions.refresh": "重新整理",
 

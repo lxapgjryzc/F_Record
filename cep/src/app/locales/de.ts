@@ -70,6 +70,8 @@ export const dict: Record<string, string> = {
     "sessions.delete": "Löschen",
     "sessions.deleteConfirm":
         "Diese Aufnahme und alle ihre Bilder löschen? Das lässt sich nicht rückgängig machen.",
+    "sessions.deleteRestartConfirm":
+        "Diese Aufnahme läuft gerade. Sie mit allen ihren Bildern löschen und eine neue starten? Das lässt sich nicht rückgängig machen.",
     "sessions.current": "wird gerade aufgenommen",
     "sessions.refresh": "Aktualisieren",
 

@@ -100,6 +100,8 @@ export class CaptureScheduler {
     private avgCaptureMs: number | null = null;
     private droppedFrames = 0;
     private consecutiveFailures = 0;
+    /** Resolvers handed out by whenIdle, released when a capture settles. */
+    private idleWaiters: Array<() => void> = [];
 
     constructor(options: SchedulerOptions) {
         this.timers = options.timers || realTimers;
@@ -165,6 +167,26 @@ export class CaptureScheduler {
         return this.pausedReason !== null;
     }
 
+    /**
+     * Resolves once no capture is in flight.
+     *
+     * Deleting a session folder has to wait for this. A capture is a chain of
+     * awaits -- render, then encode -- and one that is already past its "is
+     * this still the current session" check will finish writing its frame
+     * regardless, recreating the folder that was just removed. Callers drop
+     * the session first, so no new capture writes anything, then wait here for
+     * whichever one was already running.
+     */
+    whenIdle(): Promise<void> {
+        if (!this.inFlight) {
+            return Promise.resolve();
+        }
+        const self = this;
+        return new Promise<void>(function (resolve) {
+            self.idleWaiters.push(resolve);
+        });
+    }
+
     /** Call when Photoshop reports pixels changed. Cheap and safe to spam. */
     notifyChange(): void {
         this.pendingChange = true;
@@ -192,6 +214,16 @@ export class CaptureScheduler {
     dispose(): void {
         this.cancelTimer();
         this.enabled = false;
+        // Never leave a whenIdle() caller waiting on a scheduler that is gone.
+        this.releaseIdleWaiters();
+    }
+
+    private releaseIdleWaiters(): void {
+        const waiters = this.idleWaiters;
+        this.idleWaiters = [];
+        for (let i = 0; i < waiters.length; i++) {
+            waiters[i]();
+        }
     }
 
     private cancelTimer(): void {
@@ -268,6 +300,7 @@ export class CaptureScheduler {
             }
 
             this.emitStats();
+            this.releaseIdleWaiters();
             this.schedule();
         };
 

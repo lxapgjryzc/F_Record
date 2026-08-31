@@ -158,7 +158,15 @@ class FRecordPlugin {
                 Promise.resolve(this.generator.setDocumentSettingsForPlugin(settings, PLUGIN_NAME)).then(
                     () => undefined
                 ),
-            getActiveDocumentId: () => this.activeDocumentId
+            getActiveDocumentId: () => this.activeDocumentId,
+            // Asked only when two documents claim one session, so the cost of
+            // a document-info call there is irrelevant -- and the expensive
+            // flags are off here as everywhere else.
+            isDocumentOpen: (documentId: number) =>
+                Promise.resolve(this.generator.getDocumentInfo(documentId, CHEAP_DOC_FLAGS)).then(
+                    (info: any) => !!info && typeof info.id === "number",
+                    () => false
+                )
         };
         this.resolver = new SessionResolver(gateway, this.index, (level, message) =>
             this.log.log(level, message)
@@ -770,6 +778,73 @@ class FRecordPlugin {
         return after;
     }
 
+    /**
+     * Throws away the recording attached to the open document and, when
+     * recording is on, opens an empty one in its place. Nobody deletes the
+     * take they are in the middle of except to start it over, so that is one
+     * action here rather than a delete the user then has to recover from.
+     *
+     * The order is the whole of it. `current` is dropped first, which makes
+     * every capture that starts afterwards a no-op, and then we wait out the
+     * one that may already be rendering: both the encoder and writeManifest
+     * create the directory they write into, so either landing after the delete
+     * would leave a half session behind -- the orphaned folder the delete
+     * existed to remove.
+     */
+    private async deleteCurrentSession(config: Config, sessionId: string): Promise<CommandResult> {
+        this.current = null;
+        this.lastFrameAt = null;
+        this.loggedGeometryFor = null;
+        this.resolvedForDocId = null;
+        this.needsResolve = true;
+        this.scheduler.discardPending();
+        await this.scheduler.whenIdle();
+
+        try {
+            deleteSession(config.processImageFolderPath, sessionId);
+        } catch (e) {
+            // Gone already, or Windows is holding a handle on it. The session
+            // is detached either way and the next resync will open a clean
+            // one, so say what happened instead of reporting a delete that
+            // did not happen.
+            this.scheduler.setEnabled(false);
+            this.scheduleResync();
+            this.broadcastState();
+            return { ok: false, error: errText(e) };
+        }
+        this.index.remove(sessionId);
+        this.index.persist();
+        this.log.info("Deleted session " + sessionId + " while it was being recorded");
+
+        const documentId = this.activeDocumentId;
+        if (documentId !== null) {
+            // The document still points at the folder that just went, in the
+            // PSD and in the resolver's map alike. Forget it and stamp the
+            // replacement, rather than leaving a dangling id behind.
+            this.resolver.forgetDocument(documentId);
+            if (config.enabled && !this.docTooSmall) {
+                const doc: DocInfo = { id: documentId, file: this.docFile, bounds: this.docBounds };
+                this.current = await this.resolver.startFresh(doc, config);
+                this.resolvedForDocId = documentId;
+                this.needsResolve = false;
+            }
+        }
+
+        this.scheduler.setEnabled(config.enabled && this.current !== null && !this.docTooSmall);
+        if (this.current === null) {
+            // Recording is off, so no folder was created to replace the one
+            // deleted. Re-resolve promptly rather than at the next heartbeat,
+            // so the panel stops showing a document with no recording sooner.
+            this.scheduleResync();
+        }
+        this.broadcastState();
+        return {
+            ok: true,
+            sessions: listSessions(config.processImageFolderPath),
+            state: this.buildState()
+        };
+    }
+
     private async handleCommand(command: Command): Promise<CommandResult> {
         const config = this.configStore.get();
 
@@ -796,7 +871,7 @@ class FRecordPlugin {
 
             case "deleteSession": {
                 if (this.current && this.current.sessionId === command.sessionId) {
-                    return { ok: false, error: "That session is currently being recorded" };
+                    return this.deleteCurrentSession(config, command.sessionId);
                 }
                 deleteSession(config.processImageFolderPath, command.sessionId);
                 this.index.remove(command.sessionId);

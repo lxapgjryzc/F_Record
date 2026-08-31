@@ -58,6 +58,8 @@ export interface PsGateway {
     /** Applies to the frontmost document only -- see the note at the top. */
     setActiveDocumentSettings(settings: Record<string, unknown>): Promise<void>;
     getActiveDocumentId(): number | null;
+    /** False once Photoshop has closed the document. */
+    isDocumentOpen(documentId: number): Promise<boolean>;
 }
 
 export interface ResolvedSession {
@@ -211,6 +213,10 @@ export class SessionResolver {
 
         let sessionId: string | null = null;
         let restamped = false;
+        // Steps 1-4 only choose an id; the write into the PSD happens once,
+        // after step 5 has had its say. A branched document must not be
+        // stamped with the id it is about to be denied.
+        let needsStamp = false;
 
         // 1. The PSD's own copy -- unless a stamp for this document is still
         //    queued. A pending stamp means we already know the right id and
@@ -221,7 +227,7 @@ export class SessionResolver {
         const pending = this.pendingStamps[doc.id];
         if (pending && pending !== stored && this.sessionExists(config, pending)) {
             sessionId = pending;
-            restamped = await this.stamp(doc.id, pending);
+            needsStamp = true;
         } else if (stored && this.sessionExists(config, stored)) {
             sessionId = stored;
         }
@@ -234,7 +240,7 @@ export class SessionResolver {
             const candidate = remembered || (indexed ? indexed.sessionId : null);
             if (candidate && this.sessionExists(config, candidate)) {
                 sessionId = candidate;
-                restamped = await this.stamp(doc.id, candidate);
+                needsStamp = true;
             }
         }
 
@@ -243,11 +249,29 @@ export class SessionResolver {
             const byPath = this.index.findByFilePath(filePath);
             if (byPath && this.sessionExists(config, byPath.sessionId)) {
                 sessionId = byPath.sessionId;
-                restamped = await this.stamp(doc.id, byPath.sessionId);
+                needsStamp = true;
             }
         }
 
-        // 5. Nothing matched. Collect same-canvas sessions for the panel to
+        // 5. One session, one document. Two documents claiming the same id
+        //    means the drawing was branched in two -- see the note on
+        //    heldByAnotherOpenDocument -- and the newcomer gets its own
+        //    recording rather than interleaving frames into someone else's.
+        if (sessionId && (await this.heldByAnotherOpenDocument(sessionId, doc.id))) {
+            this.log(
+                "info",
+                "Document " + doc.id + " ('" + docName + "') carries session " + sessionId +
+                    ", which another open document is already recording; branching it into its own recording"
+            );
+            sessionId = null;
+            needsStamp = false;
+        }
+
+        if (sessionId && needsStamp) {
+            restamped = await this.stamp(doc.id, sessionId);
+        }
+
+        // 6. Nothing matched. Collect same-canvas sessions for the panel to
         //    offer, rather than adopting one behind the user's back.
         const candidates = sessionId ? [] : this.canvasCandidates(config, size, doc.id);
 
@@ -278,6 +302,9 @@ export class SessionResolver {
     async adopt(doc: DocInfo, config: Config, sessionId: string): Promise<ResolvedSession> {
         if (!this.sessionExists(config, sessionId)) {
             throw new Error("Session '" + sessionId + "' no longer exists");
+        }
+        if (await this.heldByAnotherOpenDocument(sessionId, doc.id)) {
+            throw new Error("Session '" + sessionId + "' is being recorded by another open document");
         }
         const filePath = documentFilePath(doc.file);
         const docName = documentDisplayName(doc.file);
@@ -387,7 +414,10 @@ export class SessionResolver {
                 continue;
             }
             // Skip sessions already attached to another open document.
-            if (entry.docIds.indexOf(documentId) === -1 && this.isAttachedElsewhere(entry.sessionId, documentId)) {
+            if (
+                entry.docIds.indexOf(documentId) === -1 &&
+                this.otherDocumentsHolding(entry.sessionId, documentId).length > 0
+            ) {
                 continue;
             }
             const summary = summarizeSession(entry.folder);
@@ -398,15 +428,47 @@ export class SessionResolver {
         return out;
     }
 
-    private isAttachedElsewhere(sessionId: string, documentId: number): boolean {
+    /**
+     * True when another document Photoshop still has open is recording into
+     * this session.
+     *
+     * Save As is also how an artist branches a drawing in two. The open
+     * document keeps the recording -- that is the entire point of the repair
+     * above -- while the file left behind on disk still carries the same
+     * session id, stamped into it before the split. Reopen that file to try a
+     * different direction and two documents now claim one folder: both write
+     * frames into it and the export interleaves two different drawings into
+     * one video. So the second document is branched off instead.
+     *
+     * The map alone is not proof of a conflict. A document closed without us
+     * seeing the event leaves a stale entry behind, and treating that as a
+     * conflict would split a recording merely because a file was reopened --
+     * the exact failure this whole module exists to prevent. Photoshop is
+     * asked whether the other document really is still open, and entries it
+     * no longer recognises are dropped.
+     */
+    private async heldByAnotherOpenDocument(sessionId: string, documentId: number): Promise<boolean> {
+        const holders = this.otherDocumentsHolding(sessionId, documentId);
+        for (let i = 0; i < holders.length; i++) {
+            if (await this.ps.isDocumentOpen(holders[i])) {
+                return true;
+            }
+            this.forgetDocument(holders[i]);
+        }
+        return false;
+    }
+
+    /** Documents other than this one that the map has attached to the session. */
+    private otherDocumentsHolding(sessionId: string, documentId: number): number[] {
+        const out: number[] = [];
         const keys = Object.keys(this.docToSession);
         for (let i = 0; i < keys.length; i++) {
             const id = parseInt(keys[i], 10);
             if (id !== documentId && this.docToSession[id] === sessionId) {
-                return true;
+                out.push(id);
             }
         }
-        return false;
+        return out;
     }
 }
 

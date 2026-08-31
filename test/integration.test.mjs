@@ -434,13 +434,58 @@ test("sessions can be listed and deleted over the bridge", async (t) => {
     assert.equal(listed.body.sessions.length, 1);
     assert.equal(listed.body.sessions[0].docName, "test");
 
-    // The session being recorded right now must not be deletable underneath us.
-    const refused = await request(h.bridge, "POST", "/command", {
+    const stale = await request(h.bridge, "POST", "/command", {
         type: "deleteSession",
-        sessionId: listed.body.sessions[0].sessionId
+        sessionId: "no-such-session"
     });
-    assert.equal(refused.body.ok, false);
-    assert.match(refused.body.error, /currently being recorded/);
+    assert.equal(stale.body.ok, false, "and a folder we did not write is never touched");
+});
+
+test("deleting the take in progress wipes it and starts a fresh one", async (t) => {
+    const h = await startPlugin();
+    t.after(() => h.cleanup());
+
+    const started = await request(h.bridge, "POST", "/command", {
+        type: "setConfig",
+        patch: { enabled: true, minIntervalMs: 100 }
+    });
+    const folder = started.body.state.session.folder;
+    const sessionId = started.body.state.session.sessionId;
+
+    h.ps.emit("imageChanged", { id: 1, layers: [{ pixels: true }] });
+    await waitFor(() =>
+        fs.readdirSync(folder).filter((f) => f.endsWith(".jpg")).length >= 1 ? true : null
+    );
+
+    // The artist decides the take is a write-off and starts over.
+    const deleted = await request(h.bridge, "POST", "/command", {
+        type: "deleteSession",
+        sessionId
+    });
+    assert.equal(deleted.body.ok, true);
+    assert.equal(fs.existsSync(folder), false, "the folder and every frame in it are gone");
+
+    const fresh = deleted.body.state.session;
+    assert.ok(fresh, "recording carries straight on");
+    assert.notEqual(fresh.sessionId, sessionId, "in a new session");
+    assert.equal(fresh.frameCount, 0, "starting from nothing");
+    assert.equal(h.ps.settings.get(1).sessionId, fresh.sessionId, "and the PSD points at the new one");
+
+    // Exactly one folder: the deleted one must not come back when the pending
+    // manifest flush or a capture already in flight lands.
+    const config = JSON.parse(fs.readFileSync(path.join(h.appDir, "config.json"), "utf8"));
+    assert.deepEqual(fs.readdirSync(config.processImageFolderPath), [fresh.sessionId]);
+
+    h.ps.emit("imageChanged", { id: 1, layers: [{ pixels: true }] });
+    await waitFor(() =>
+        fs.readdirSync(fresh.folder).filter((f) => f.endsWith(".jpg")).length >= 1 ? true : null
+    );
+    await new Promise((r) => setTimeout(r, 2500)); // outlast MANIFEST_FLUSH_MS
+    assert.deepEqual(
+        fs.readdirSync(config.processImageFolderPath),
+        [fresh.sessionId],
+        "and nothing resurrects the deleted folder afterwards"
+    );
 });
 
 test("state and frame updates are pushed over SSE rather than polled for", async (t) => {

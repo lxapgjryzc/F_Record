@@ -403,7 +403,12 @@ export function App(): JSX.Element {
                             })
                         }
                         onDelete={(session) => {
-                            if (!window.confirm(t("sessions.deleteConfirm"))) {
+                            const isCurrent =
+                                !!state && !!state.session && state.session.sessionId === session.sessionId;
+                            const question = isCurrent
+                                ? t("sessions.deleteRestartConfirm")
+                                : t("sessions.deleteConfirm");
+                            if (!window.confirm(question)) {
                                 return;
                             }
                             send({ type: "deleteSession", sessionId: session.sessionId })

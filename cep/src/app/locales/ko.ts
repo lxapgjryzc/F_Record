@@ -67,6 +67,7 @@ export const dict: Record<string, string> = {
     "sessions.export": "내보내기",
     "sessions.delete": "삭제",
     "sessions.deleteConfirm": "이 기록과 모든 프레임을 삭제할까요? 되돌릴 수 없습니다.",
+    "sessions.deleteRestartConfirm": "이 녹화는 진행 중입니다. 모든 프레임과 함께 삭제하고 새로 녹화를 시작할까요? 되돌릴 수 없습니다.",
     "sessions.current": "기록 중",
     "sessions.refresh": "새로 고침",
 

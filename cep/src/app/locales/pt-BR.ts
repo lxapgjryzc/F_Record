@@ -70,6 +70,8 @@ export const dict: Record<string, string> = {
     "sessions.delete": "Excluir",
     "sessions.deleteConfirm":
         "Excluir esta gravação e todos os seus quadros? Não é possível desfazer.",
+    "sessions.deleteRestartConfirm":
+        "Esta gravação está em andamento. Excluí-la com todos os seus quadros e começar uma nova? Não é possível desfazer.",
     "sessions.current": "gravando agora",
     "sessions.refresh": "Atualizar",
 

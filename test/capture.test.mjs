@@ -252,3 +252,42 @@ test("discardPending drops work belonging to a document we just left", async () 
     await h.clock.advance(60000);
     assert.equal(h.calls.length, 0);
 });
+
+test("whenIdle resolves only once the capture in flight has settled", async () => {
+    const h = makeScheduler();
+
+    let idleWithNothingRunning = false;
+    h.scheduler.whenIdle().then(() => (idleWithNothingRunning = true));
+    await flush();
+    assert.equal(idleWithNothingRunning, true, "nothing in flight, nothing to wait for");
+
+    h.scheduler.setEnabled(true);
+    h.scheduler.notifyChange();
+    await h.clock.advance(0);
+    assert.ok(h.inFlight(), "precondition: a capture is running");
+
+    // What this is for: deleting a session folder has to outlast the frame
+    // being written into it, or the encoder recreates the folder behind the
+    // delete and leaves half a recording on disk.
+    let waited = false;
+    h.scheduler.whenIdle().then(() => (waited = true));
+    await flush();
+    assert.equal(waited, false, "still writing");
+
+    await h.finish();
+    assert.equal(waited, true, "released as soon as the capture settles");
+});
+
+test("whenIdle is released by dispose, so a caller is never stranded", async () => {
+    const h = makeScheduler();
+    h.scheduler.setEnabled(true);
+    h.scheduler.notifyChange();
+    await h.clock.advance(0);
+
+    let released = false;
+    h.scheduler.whenIdle().then(() => (released = true));
+    h.scheduler.dispose();
+    await flush();
+
+    assert.equal(released, true);
+});
