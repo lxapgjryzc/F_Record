@@ -95,6 +95,8 @@ export const dict: Record<string, string> = {
     "settings.autoNew.hint": "Wenn aus, muss jedes Dokument von Hand gestartet werden.",
     "settings.language": "Sprache",
     "settings.language.auto": "Wie Photoshop",
+    "settings.runtime": "Laufzeitumgebung",
+    "settings.runtime.hint": "Die Node-Version, die Photoshop dem Zusatzmodul gibt, und welche Kompatibilitäts-Fallbacks aktiv sind. Beim Melden eines Problems hilfreich.",
 
     "update.setting": "Nach Updates suchen",
     "update.setting.hint":

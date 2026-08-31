@@ -95,6 +95,8 @@ export const dict: Record<string, string> = {
     "settings.autoNew.hint": "Если выключено, каждый документ нужно запускать вручную.",
     "settings.language": "Язык",
     "settings.language.auto": "Как в Photoshop",
+    "settings.runtime": "Среда выполнения",
+    "settings.runtime.hint": "Версия Node, которую Photoshop даёт модулю, и какие резервные пути совместимости включены. Стоит указать при сообщении о проблеме.",
 
     "update.setting": "Проверять обновления",
     "update.setting.hint":

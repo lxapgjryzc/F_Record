@@ -84,6 +84,8 @@ export const dict: Record<string, string> = {
     "settings.autoNew.hint": "关闭后，每个文档都需要手动开始。",
     "settings.language": "语言",
     "settings.language.auto": "跟随 Photoshop",
+    "settings.runtime": "运行环境",
+    "settings.runtime.hint": "Photoshop 给到插件的 Node 版本，以及当前生效的兼容回退。反馈问题时把这一行附上会很有帮助。",
 
     "update.setting": "检查更新",
     "update.setting.hint": "大约每天向 GitHub 查询一次有没有新版本。默认关闭。不会发送任何与你或你的作品有关的信息。",

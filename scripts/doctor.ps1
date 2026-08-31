@@ -173,6 +173,15 @@ if (Test-Path -LiteralPath $bridgeFile) {
             Write-Host ("    Plug-in version {0}  (protocol {1})" -f $bridge.pluginVersion, $bridge.protocolVersion) -ForegroundColor DarkGray
             Write-Host ("    Listening on    127.0.0.1:{0}  (pid {1})" -f $bridge.port, $bridge.pid) -ForegroundColor DarkGray
             Write-Host ("    Started         {0}" -f ([datetimeoffset]::FromUnixTimeMilliseconds([long]$bridge.startedAt).LocalDateTime)) -ForegroundColor DarkGray
+            # Which Node Photoshop handed the generator, and which compatibility
+            # fallbacks that forced. Photoshop 2020 ships Node 8.6 and 2026
+            # ships 22, and an export that only misbehaves on old Photoshop is
+            # almost always one of these. StrictMode makes a plain property
+            # access throw when an older bridge.json predates the field.
+            $nodeProperty = $bridge.PSObject.Properties['node']
+            if ($nodeProperty -and $nodeProperty.Value) {
+                Write-Host ("    Runtime         {0}" -f $nodeProperty.Value) -ForegroundColor DarkGray
+            }
         } else {
             Write-Host '  Not running: bridge.json is stale (that process has exited).' -ForegroundColor Yellow
             Write-Host '  This is normal when Photoshop is closed.' -ForegroundColor DarkGray

@@ -4,6 +4,7 @@ import { Translate } from "../i18n";
 import { LOCALE_NAMES, Locale } from "../locales";
 import { Hint, Row, Select, Switch } from "./ui";
 import { chooseFolder } from "../psHost";
+import { describeNodeCompat } from "../../../../shared/compat";
 
 export interface SettingsProps {
     t: Translate;
@@ -13,6 +14,8 @@ export interface SettingsProps {
     /** Null while a check is running, so the button can show progress. */
     updateBusy: boolean;
     onCheckUpdates: () => void;
+    /** The generator process's Node, over the bridge. Null when disconnected. */
+    generatorNode: string | null;
 }
 
 const RESOLUTIONS: Resolution[] = ["360", "720", "1080", "1440", "2160"];
@@ -180,6 +183,23 @@ export function Settings(props: SettingsProps): JSX.Element {
                         </button>
                     </div>
                 ) : null}
+            </div>
+
+            {/*
+              * Both halves, because they are different Node builds: the panel
+              * gets CEP's (8.6 on Photoshop 2020) and the generator gets its
+              * own. An export bug that only happens on old Photoshop is almost
+              * always one of these fallbacks, and this is the line to quote.
+              * "Panel" and "Generator" stay untranslated -- Generator is what
+              * Photoshop calls it in every language.
+              */}
+            <div class="section">
+                <div class="row">
+                    <span class="row-label">{t("settings.runtime")}</span>
+                </div>
+                <Hint>{"Panel · " + describeNodeCompat()}</Hint>
+                <Hint>{"Generator · " + (props.generatorNode || "—")}</Hint>
+                <Hint>{t("settings.runtime.hint")}</Hint>
             </div>
         </div>
     );

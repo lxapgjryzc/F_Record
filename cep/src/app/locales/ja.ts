@@ -89,6 +89,8 @@ export const dict: Record<string, string> = {
     "settings.autoNew.hint": "オフにすると、ドキュメントごとに手動で開始する必要があります。",
     "settings.language": "言語",
     "settings.language.auto": "Photoshop に合わせる",
+    "settings.runtime": "実行環境",
+    "settings.runtime.hint": "Photoshop がプラグインに渡している Node のバージョンと、有効になっている互換フォールバックです。問題を報告するときに添えると役立ちます。",
 
     "update.setting": "アップデートを確認",
     "update.setting.hint":

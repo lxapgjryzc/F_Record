@@ -223,3 +223,31 @@ export const nodeVersionInfo = {
     hasRm: HAS_RM,
     hasRecursiveRmdir: HAS_RECURSIVE_RMDIR
 };
+
+/**
+ * One line saying which Node this is and which fallbacks are live.
+ *
+ * This module exists because Photoshop hands each half of the plug-in a
+ * different, sometimes very old Node -- 8.6 in the 2020 panel, 22 in the 2026
+ * generator -- and 3.x's export was broken on the old ones precisely because it
+ * called fs.rmSync unconditionally. Those are also the hosts hardest to get
+ * hold of for testing, so when someone reports "export does nothing on 2020"
+ * the first useful question is which of these detections fired. Printing it
+ * beats asking them to guess.
+ *
+ * Example: `Node 8.6 (fallbacks: mkdir, rm, rmdir)` / `Node 22.18 (no fallbacks)`
+ */
+export function describeNodeCompat(): string {
+    const fallbacks: string[] = [];
+    if (!HAS_RECURSIVE_MKDIR) {
+        fallbacks.push("mkdir");
+    }
+    if (!HAS_RM) {
+        fallbacks.push("rm");
+    }
+    if (!HAS_RECURSIVE_RMDIR) {
+        fallbacks.push("rmdir");
+    }
+    const version = "Node " + NODE_VERSION[0] + "." + NODE_VERSION[1];
+    return version + (fallbacks.length ? " (fallbacks: " + fallbacks.join(", ") + ")" : " (no fallbacks)");
+}

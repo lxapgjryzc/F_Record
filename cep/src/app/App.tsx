@@ -421,6 +421,7 @@ export function App(): JSX.Element {
                         onPatch={patchConfig}
                         updateBusy={updateBusy}
                         onCheckUpdates={checkForUpdates}
+                        generatorNode={state ? state.generator.node : null}
                     />
                 ) : null}
             </div>

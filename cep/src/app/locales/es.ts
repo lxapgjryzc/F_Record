@@ -95,6 +95,8 @@ export const dict: Record<string, string> = {
     "settings.autoNew.hint": "Si está desactivado, cada documento debe iniciarse a mano.",
     "settings.language": "Idioma",
     "settings.language.auto": "Como Photoshop",
+    "settings.runtime": "Entorno",
+    "settings.runtime.hint": "La versión de Node que Photoshop entrega al plugin y qué alternativas de compatibilidad están activas. Conviene indicarla al informar de un problema.",
 
     "update.setting": "Buscar actualizaciones",
     "update.setting.hint":

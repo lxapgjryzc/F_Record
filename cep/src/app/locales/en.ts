@@ -94,6 +94,8 @@ export const dict: Record<string, string> = {
     "settings.autoNew.hint": "When off, each document has to be started by hand.",
     "settings.language": "Language",
     "settings.language.auto": "Match Photoshop",
+    "settings.runtime": "Runtime",
+    "settings.runtime.hint": "The Node build Photoshop hands the plug-in, and which compatibility fallbacks are active. Worth quoting when reporting a problem.",
 
     "update.setting": "Check for updates",
     "update.setting.hint":

@@ -119,6 +119,13 @@ export interface GeneratorInfo {
     pid: number;
     startedAt: number;
     photoshopVersion: string | null;
+    /**
+     * The Node the generator got from Photoshop, and which compat fallbacks are
+     * live. Photoshop hands each host a different vintage -- 8.6 on 2020, 22 on
+     * 2026 -- and that is the first thing worth knowing when export misbehaves
+     * on a version nobody can reproduce on.
+     */
+    node: string;
 }
 
 export interface DocumentState {
@@ -237,6 +244,8 @@ export interface BridgeInfo {
     protocolVersion: number;
     pluginVersion: string;
     startedAt: number;
+    /** Mirrored here so doctor.ps1 can report it without talking to the bridge. */
+    node: string;
 }
 
 /** Origin the panel sends and the generator checks. Panels run from file:// or app:// */

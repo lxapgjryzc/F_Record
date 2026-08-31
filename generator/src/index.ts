@@ -31,7 +31,7 @@ import {
     Bounds
 } from "../../shared/protocol";
 import { frameFileName } from "../../shared/paths";
-import { randomHex } from "../../shared/compat";
+import { describeNodeCompat, randomHex } from "../../shared/compat";
 import {
     ConfigStore,
     SessionIndex,
@@ -196,6 +196,9 @@ class FRecordPlugin {
 
     async start(): Promise<void> {
         this.log.info("F_Record " + PLUGIN_VERSION + " starting (protocol " + PROTOCOL_VERSION + ")");
+        // doctor.ps1 tails this log, so a 2020 user reporting a broken export
+        // arrives with the answer already in front of them.
+        this.log.info("Generator runtime: " + describeNodeCompat());
 
         this.index.prune();
         this.index.persist();
@@ -691,7 +694,8 @@ class FRecordPlugin {
                 protocolVersion: PROTOCOL_VERSION,
                 pid: process.pid,
                 startedAt: this.startedAt,
-                photoshopVersion: this.photoshopVersion
+                photoshopVersion: this.photoshopVersion,
+                node: describeNodeCompat()
             },
             config: config,
             document: document,

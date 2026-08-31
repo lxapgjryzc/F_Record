@@ -32,7 +32,7 @@ import {
     BRIDGE_ORIGIN_VALUE
 } from "../../shared/protocol";
 import { bridgePath } from "../../shared/paths";
-import { writeJsonAtomic, mkdirp, randomHex } from "../../shared/compat";
+import { writeJsonAtomic, mkdirp, randomHex, describeNodeCompat } from "../../shared/compat";
 import * as path from "path";
 import * as fs from "fs";
 
@@ -119,7 +119,8 @@ export class Bridge {
             pid: process.pid,
             protocolVersion: PROTOCOL_VERSION,
             pluginVersion: this.pluginVersion,
-            startedAt: Date.now()
+            startedAt: Date.now(),
+            node: describeNodeCompat()
         };
         try {
             mkdirp(path.dirname(bridgePath()));

@@ -84,6 +84,8 @@ export const dict: Record<string, string> = {
     "settings.autoNew.hint": "關閉後，每個文件都需要手動開始。",
     "settings.language": "語言",
     "settings.language.auto": "跟隨 Photoshop",
+    "settings.runtime": "執行環境",
+    "settings.runtime.hint": "Photoshop 給到增效模組的 Node 版本，以及目前生效的相容回退。回報問題時附上這一行會很有幫助。",
 
     "update.setting": "檢查更新",
     "update.setting.hint": "大約每天向 GitHub 查詢一次有沒有新版本。預設關閉。不會傳送任何與你或你的作品有關的資訊。",

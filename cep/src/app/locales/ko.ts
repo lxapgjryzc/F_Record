@@ -89,6 +89,8 @@ export const dict: Record<string, string> = {
     "settings.autoNew.hint": "끄면 문서마다 직접 시작해야 합니다.",
     "settings.language": "언어",
     "settings.language.auto": "Photoshop 따르기",
+    "settings.runtime": "런타임",
+    "settings.runtime.hint": "Photoshop이 플러그인에 제공하는 Node 버전과 현재 적용된 호환 대체 경로입니다. 문제를 보고할 때 함께 알려주면 도움이 됩니다.",
 
     "update.setting": "업데이트 확인",
     "update.setting.hint":

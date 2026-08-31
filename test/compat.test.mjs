@@ -24,7 +24,8 @@ import {
     pad,
     timeStampString,
     randomHex,
-    nodeVersionInfo
+    nodeVersionInfo,
+    describeNodeCompat
 } from "../dist/test/compat.mjs";
 import { frameFileName, parseFrameFileName, parseFrameList, parseLegacyFrameFileName } from "../dist/test/paths.mjs";
 import { tempDir } from "./helpers.mjs";
@@ -179,4 +180,24 @@ test("legacy 3.x frame names are still recognised so old recordings export", () 
         fileName: "000123.jpg"
     });
     assert.equal(parseLegacyFrameFileName("000123_1700000000000.jpg"), null);
+});
+
+test("describeNodeCompat names the Node and the fallbacks it forces", () => {
+    const text = describeNodeCompat();
+
+    // This is the line a user pastes into an issue, so it has to be readable
+    // and it has to say something either way.
+    assert.match(text, /^Node \d+\.\d+ /, "starts with the version: " + text);
+    assert.ok(
+        / \(no fallbacks\)$/.test(text) || / \(fallbacks: [a-z, ]+\)$/.test(text),
+        "ends with a fallback verdict: " + text
+    );
+
+    // And it has to agree with the flags it is describing.
+    const claimsNone = text.indexOf("no fallbacks") !== -1;
+    const allModern =
+        nodeVersionInfo.hasRm && nodeVersionInfo.hasRecursiveMkdir && nodeVersionInfo.hasRecursiveRmdir;
+    assert.equal(claimsNone, allModern, "the summary matches the detected flags");
+
+    assert.equal(text.indexOf(String(nodeVersionInfo.major)), 5, "reports the real major version");
 });
