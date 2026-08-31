@@ -70,9 +70,11 @@ To uninstall, double-click `scripts\uninstall.cmd`. Your recordings live in
 background process, so the panel can be closed or hidden. Turn on "Start
 recording when Photoshop opens" in Settings and you never have to touch it.
 
-Each document's frames go in their own folder. **Save As under a new name,
-rename, close and reopen, even restart Photoshop — the recording continues into
-the same folder.** That was the main thing wrong with 3.x; see below.
+Each document's frames go in their own folder. **Rename, close and reopen, even
+restart Photoshop — the recording continues into the same folder.** That was the
+main thing wrong with 3.x; see below. Save As splits it instead: the new file
+gets a complete copy of the recording so far, and the file left on disk keeps
+the original.
 
 The Recordings tab lists everything you have ever recorded, and any of them can
 be exported, not just the document currently open.
@@ -186,6 +188,30 @@ automatic, permanent invariant.
 When all three miss — say you restart Photoshop and open an unfamiliar file —
 matching sessions are **offered as a choice, never adopted silently**. Picking
 wrong corrupts a recording; a spurious new folder only costs disk space.
+
+### Save As leaves two recordings
+
+Before 4.2, both files pointed at one recording after a Save As: the document
+you carried on drawing in was recording, and the file left on disk still held
+the same id. Reopen it to try a different direction and two documents wrote
+frames into one folder, so the export cut two different drawings together.
+
+Now Save As splits them. **The open document gets a complete copy of everything
+drawn so far** and records on its own from there; the file left behind keeps the
+original folder, frozen at the moment it was saved away from. Both files have a
+full process video, neither is missing its first half. Saving one file under a
+new name repeatedly works the same way: every name keeps a recording of its own.
+
+Which side moves is not a free choice. Photoshop only allows `generatorSettings`
+to be written to the document that is open, so only that one can be stamped with
+a new id on the spot; the file on disk carries the old id and therefore keeps the
+original folder. Folders ending up named after their files is a happy accident.
+
+The copy is made with hard links where the filesystem allows, so splitting a
+10,000 frame recording costs neither disk space nor a wait — and the two folders
+are still independent: delete, rename or export either one and the other is
+untouched. Filesystems without hard links (exFAT, network shares) fall back to a
+real copy.
 
 The storage layout changed to match:
 

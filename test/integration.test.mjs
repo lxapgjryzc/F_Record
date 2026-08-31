@@ -15,11 +15,12 @@ import * as path from "node:path";
 import * as http from "node:http";
 import { createRequire } from "node:module";
 
-import { withIsolatedAppDir, flush } from "./helpers.mjs";
+import { withIsolatedAppDir, tempDir, flush } from "./helpers.mjs";
 
 const require = createRequire(import.meta.url);
 const BUNDLE = path.resolve("dist/generator/com.f_know.f_record.generator/index.js");
 const BOUNDS = { top: 0, left: 0, right: 800, bottom: 600 };
+const DEFAULT_DOC_FILE = "C:" + String.fromCharCode(92) + "art" + String.fromCharCode(92) + "test.psd";
 
 /** A pixmap shaped exactly like generator-core's xpm.Pixmap: ARGB, 8-bit. */
 function makePixmap(width, height, bounds) {
@@ -42,11 +43,11 @@ function makePixmap(width, height, bounds) {
     };
 }
 
-function makeMockPhotoshop() {
+function makeMockPhotoshop(initialFile) {
     const listeners = new Map();
     const settings = new Map();
     const calls = { documentInfo: [], pixmap: [] };
-    let documentFile = "C:\\art\\test.psd";
+    let documentFile = initialFile || DEFAULT_DOC_FILE;
 
     const generator = {
         getDocumentInfo(documentId, flags) {
@@ -145,13 +146,13 @@ async function waitFor(predicate, timeoutMs = 5000) {
     }
 }
 
-async function startPlugin() {
+async function startPlugin(initialFile) {
     const env = withIsolatedAppDir();
     // The bundle caches nothing across requires, but clear it anyway so each
     // test gets a fresh module instance.
     delete require.cache[BUNDLE];
     const plugin = require(BUNDLE);
-    const ps = makeMockPhotoshop();
+    const ps = makeMockPhotoshop(initialFile);
     const handle = plugin.init(ps.generator, {}, null);
     await handle.ready;
 
@@ -355,42 +356,105 @@ test("events with no pixel changes do not trigger a capture", async (t) => {
     assert.equal(h.ps.calls.pixmap.length, before);
 });
 
-test("Save As keeps writing into the same session folder", async (t) => {
-    const h = await startPlugin();
+test("Save As hands the renamed document a copy and leaves the original whole", async (t) => {
+    // Real files, because whether this counts as a Save As turns on a.psd
+    // still being on disk once the document has become b.psd.
+    const art = tempDir("f_record-art-");
+    t.after(() => art.cleanup());
+    const first = path.join(art.dir, "a.psd");
+    const second = path.join(art.dir, "b.psd");
+    fs.writeFileSync(first, "psd");
+
+    const h = await startPlugin(first);
     t.after(() => h.cleanup());
 
     const started = await request(h.bridge, "POST", "/command", {
         type: "setConfig",
         patch: { enabled: true, minIntervalMs: 100 }
     });
-    const folder = started.body.state.session.folder;
+    const original = started.body.state.session;
+
+    h.ps.emit("imageChanged", { id: 1, layers: [{ pixels: true }] });
+    await waitFor(() =>
+        fs.readdirSync(original.folder).filter((f) => f.endsWith(".jpg")).length >= 1 ? true : null
+    );
+    const drawnSoFar = fs.readdirSync(original.folder).filter((f) => f.endsWith(".jpg")).sort();
+
+    // File > Save As. Photoshop writes b.psd, clears generatorSettings, and
+    // leaves a.psd on disk exactly as it was.
+    fs.writeFileSync(second, "psd");
+    h.ps.saveAs(second);
+    h.ps.emit("save", {});
+
+    const forked = await waitFor(async () => {
+        const state = await request(h.bridge, "GET", "/state");
+        const session = state.body.session;
+        return session && session.sessionId !== original.sessionId ? session : null;
+    });
+
+    // The drawing carries on where it was, in a folder of its own.
+    assert.equal(forked.frameCount, drawnSoFar.length, "nothing is lost in the handover");
+    assert.deepEqual(
+        fs.readdirSync(forked.folder).filter((f) => f.endsWith(".jpg")).sort(),
+        drawnSoFar,
+        "the same frames, under the same names"
+    );
+    assert.equal(h.ps.settings.get(1).sessionId, forked.sessionId, "and the document is stamped with it");
+
+    // a.psd keeps its own recording, frozen where it was saved away from.
+    assert.deepEqual(
+        fs.readdirSync(original.folder).filter((f) => f.endsWith(".jpg")).sort(),
+        drawnSoFar
+    );
+
+    // Everything drawn from here belongs to b.psd alone. This is the 3.x
+    // regression in its new form: a second folder is fine, a second folder
+    // that starts empty and loses the first half of the drawing is not.
+    h.ps.emit("imageChanged", { id: 1, layers: [{ pixels: true }] });
+    await waitFor(() =>
+        fs.readdirSync(forked.folder).filter((f) => f.endsWith(".jpg")).length > drawnSoFar.length
+            ? true
+            : null
+    );
+    assert.equal(
+        fs.readdirSync(original.folder).filter((f) => f.endsWith(".jpg")).length,
+        drawnSoFar.length,
+        "a.psd gains nothing from what is drawn in b.psd"
+    );
+
+    const config = JSON.parse(fs.readFileSync(path.join(h.appDir, "config.json"), "utf8"));
+    assert.equal(fs.readdirSync(config.processImageFolderPath).length, 2, "two files, two recordings");
+});
+
+test("a plain save keeps writing into the same session folder", async (t) => {
+    const art = tempDir("f_record-art-");
+    t.after(() => art.cleanup());
+    const file = path.join(art.dir, "a.psd");
+    fs.writeFileSync(file, "psd");
+
+    const h = await startPlugin(file);
+    t.after(() => h.cleanup());
+
+    const started = await request(h.bridge, "POST", "/command", {
+        type: "setConfig",
+        patch: { enabled: true, minIntervalMs: 100 }
+    });
     const sessionId = started.body.state.session.sessionId;
+    const folder = started.body.state.session.folder;
 
     h.ps.emit("imageChanged", { id: 1, layers: [{ pixels: true }] });
     await waitFor(() => (fs.readdirSync(folder).filter((f) => f.endsWith(".jpg")).length >= 1 ? true : null));
 
-    // The artist saves under a new name. Photoshop clears generatorSettings.
-    h.ps.saveAs("C:\\art\\renamed.psd");
-    assert.equal(h.ps.settings.has(1), false, "precondition: the id really is gone");
+    // Ctrl+S: same path, so there is nothing to fork.
     h.ps.emit("save", {});
-
-    await waitFor(async () => {
-        const state = await request(h.bridge, "GET", "/state");
-        return state.body.session && state.body.session.sessionId === sessionId ? true : null;
-    });
-
     h.ps.emit("imageChanged", { id: 1, layers: [{ pixels: true }] });
     await waitFor(() => (fs.readdirSync(folder).filter((f) => f.endsWith(".jpg")).length >= 2 ? true : null));
 
     const state = await request(h.bridge, "GET", "/state");
-    assert.equal(state.body.session.sessionId, sessionId, "same recording");
-    assert.equal(h.ps.settings.get(1).sessionId, sessionId, "and the id was written back into the PSD");
+    assert.equal(state.body.session.sessionId, sessionId);
 
-    // The decisive check: exactly one session folder exists. 3.x would have
-    // started a second one here and split the recording in half.
     const config = JSON.parse(fs.readFileSync(path.join(h.appDir, "config.json"), "utf8"));
-    const sessionFolders = fs.readdirSync(config.processImageFolderPath);
-    assert.equal(sessionFolders.length, 1, "no orphaned second folder");
+    assert.deepEqual(fs.readdirSync(config.processImageFolderPath), [sessionId], "no second folder");
 });
 
 test("pause and resume are honoured, so export can stop competing with capture", async (t) => {

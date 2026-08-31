@@ -19,6 +19,8 @@ import {
 } from "../../shared/protocol";
 import {
     assign,
+    DuplicateMode,
+    duplicateFile,
     exists,
     mkdirp,
     readJson,
@@ -287,6 +289,65 @@ export function listSessions(processImageFolderPath: string): SessionSummary[] {
     return out;
 }
 
+export interface DuplicateResult {
+    frameCount: number;
+    /** "copy" means the filesystem refused hard links and real bytes moved. */
+    mode: DuplicateMode;
+}
+
+/**
+ * Puts every frame of one session into another folder.
+ *
+ * The filenames are kept exactly -- they carry the sequence number and the
+ * capture time, which are what order the export and drive real-time pacing, so
+ * renaming them would quietly change how the copy plays back.
+ *
+ * A frame that cannot be duplicated is skipped rather than aborting the whole
+ * fork: losing one frame out of a thousand is a blemish, while failing the
+ * fork outright would leave both documents recording into one folder.
+ */
+export async function duplicateFrames(
+    fromFolder: string,
+    toFolder: string,
+    log: (level: "info" | "warn" | "error", message: string) => void
+): Promise<DuplicateResult> {
+    mkdirp(toFolder);
+    const frames = scanFrames(fromFolder);
+    let mode: DuplicateMode = "link";
+    let copied = 0;
+    for (let i = 0; i < frames.length; i++) {
+        try {
+            const used = duplicateFile(
+                path.join(fromFolder, frames[i].fileName),
+                path.join(toFolder, frames[i].fileName)
+            );
+            if (used === "copy") {
+                mode = "copy";
+            }
+            copied++;
+        } catch (e) {
+            log("warn", "Could not duplicate frame " + frames[i].fileName + ": " + errorText(e));
+        }
+        // Hard links make this loop nearly free, but the byte-copy fallback on
+        // a network drive does not: hand the event loop back often enough that
+        // the generator keeps answering Photoshop while it runs.
+        if ((i & 63) === 63) {
+            await nextTick();
+        }
+    }
+    return { frameCount: copied, mode: mode };
+}
+
+function nextTick(): Promise<void> {
+    return new Promise<void>(function (resolve) {
+        setTimeout(resolve, 0);
+    });
+}
+
+function errorText(e: unknown): string {
+    return e && (e as Error).message ? (e as Error).message : String(e);
+}
+
 export function deleteSession(processImageFolderPath: string, sessionId: string): void {
     const folder = sessionFolder(processImageFolderPath, sessionId);
     // Refuse to delete anything that is not recognisably one of our folders.
@@ -414,6 +475,23 @@ export class SessionIndex {
             }
         }
         return entry;
+    }
+
+    /**
+     * Drops one document from a session's entry, leaving the rest intact.
+     *
+     * Used when a Save As forks a recording: the document has moved on to the
+     * copy, but the session it came from keeps its file paths so reopening the
+     * original file still finds it.
+     */
+    detachDocument(sessionId: string, documentId: number): void {
+        const entry = this.find(sessionId);
+        if (!entry) {
+            return;
+        }
+        entry.docIds = entry.docIds.filter(function (id) {
+            return id !== documentId;
+        });
     }
 
     remove(sessionId: string): void {

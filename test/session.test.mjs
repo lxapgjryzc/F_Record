@@ -17,11 +17,12 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { SessionResolver } from "../dist/test/session.mjs";
+import { SessionResolver, isSaveAsRename } from "../dist/test/session.mjs";
 import { SessionIndex } from "../dist/test/store.mjs";
 import { tempDir } from "./helpers.mjs";
 
 const BOUNDS = { top: 0, left: 0, right: 2000, bottom: 1500 };
+const SEP = String.fromCharCode(92);
 
 /** Stand-in for Photoshop's generatorSettings storage. */
 function makePhotoshop() {
@@ -130,7 +131,12 @@ test("a new document starts a session and stamps it into the PSD", async (t) => 
     assert.ok(fs.existsSync(path.join(outcome.session.folder, "session.json")), "manifest sits inside the folder");
 });
 
-test("Save As wipes the PSD copy; the session is recovered and re-stamped", async (t) => {
+// The forking above is driven by the plug-in, which notices the document's
+// path change. The resolver's own job is narrower and still worth pinning: a
+// document whose stamp has been wiped must find its way back to its session
+// rather than starting a fresh one. That is the safety net for every Save As
+// that does not qualify as a fork -- the file moved rather than copied, say.
+test("a document whose stamp Photoshop wiped is recovered and re-stamped", async (t) => {
     const s = setup();
     t.after(() => s.temp.cleanup());
 
@@ -162,7 +168,7 @@ test("Save As wipes the PSD copy; the session is recovered and re-stamped", asyn
     assert.equal(after.session.manifest.frameCount, 12, "frame count comes from the files on disk");
 });
 
-test("a second Save As under yet another name still continues the same session", async (t) => {
+test("a stamp wiped twice over is recovered both times", async (t) => {
     const s = setup();
     t.after(() => s.temp.cleanup());
 
@@ -466,4 +472,205 @@ test("a session another open document is recording cannot be adopted", async (t)
         () => s.resolver.adopt({ id: 2, file: "Untitled-8", bounds: BOUNDS }, s.config, first.session.sessionId),
         /another open document/
     );
+});
+
+/**
+ * Save As forks the artwork, so it forks the recording.
+ *
+ * The file left on disk is a finished work in its own right and already holds
+ * this session's id; the frames drawn up to that moment belong to both sides.
+ * The document in front gets the copy -- it is the only one Photoshop will let
+ * us stamp -- and the file left behind keeps the original folder.
+ */
+test("Save As gives the renamed document its own copy of the frames so far", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    s.ps.setActive(1);
+    const original = await s.resolver.resolve(
+        { id: 1, file: "C:" + SEP + "art" + SEP + "a.psd", bounds: BOUNDS },
+        s.config,
+        true
+    );
+    writeFrames(s.config, original.session.sessionId, 20);
+    original.session.manifest.timeSpentSec = 480;
+
+    const forked = await s.resolver.forkForSaveAs(
+        { id: 1, file: "C:" + SEP + "art" + SEP + "b.psd", bounds: BOUNDS },
+        s.config,
+        original.session
+    );
+
+    assert.notEqual(forked.sessionId, original.session.sessionId, "a second folder, not a rename");
+    assert.equal(forked.manifest.frameCount, 20, "with every frame drawn so far");
+    assert.equal(forked.manifest.timeSpentSec, 480, "and the time already spent");
+    assert.equal(forked.manifest.docName, "b");
+    assert.equal(forked.manifest.nextSeq, 21, "numbering carries on rather than restarting");
+
+    // Filenames must survive verbatim: they carry the sequence and the capture
+    // time, which are what order the export and pace real-time playback.
+    const before = fs.readdirSync(original.session.folder).filter((f) => f.endsWith(".jpg")).sort();
+    const after = fs.readdirSync(forked.folder).filter((f) => f.endsWith(".jpg")).sort();
+    assert.deepEqual(after, before);
+
+    // The file left on disk keeps its recording, and the document in front is
+    // stamped with the copy.
+    assert.equal(s.ps.peek(1).sessionId, forked.sessionId);
+    assert.deepEqual(forked.manifest.filePathHistory, ["C:" + SEP + "art" + SEP + "b.psd"]);
+    assert.equal(
+        fs.existsSync(path.join(original.session.folder, "session.json")),
+        true,
+        "the original folder is left intact"
+    );
+});
+
+test("the two halves are independent: a frame added to one does not reach the other", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    s.ps.setActive(1);
+    const original = await s.resolver.resolve(
+        { id: 1, file: "C:" + SEP + "art" + SEP + "a.psd", bounds: BOUNDS },
+        s.config,
+        true
+    );
+    writeFrames(s.config, original.session.sessionId, 5);
+    const forked = await s.resolver.forkForSaveAs(
+        { id: 1, file: "C:" + SEP + "art" + SEP + "b.psd", bounds: BOUNDS },
+        s.config,
+        original.session
+    );
+
+    // Hard links share bytes, never directory entries -- adding to or deleting
+    // from one folder must be invisible to the other.
+    fs.writeFileSync(path.join(forked.folder, "000006_1700000006000.jpg"), "x");
+    assert.equal(fs.readdirSync(original.session.folder).filter((f) => f.endsWith(".jpg")).length, 5);
+    assert.equal(fs.readdirSync(forked.folder).filter((f) => f.endsWith(".jpg")).length, 6);
+
+    fs.rmSync(original.session.folder, { recursive: true, force: true });
+    assert.equal(
+        fs.readdirSync(forked.folder).filter((f) => f.endsWith(".jpg")).length,
+        6,
+        "deleting the original leaves the copy whole"
+    );
+    assert.equal(fs.readFileSync(path.join(forked.folder, "000001_1700000001000.jpg"), "utf8"), "x");
+});
+
+test("saving one file under a new name several times leaves each name its own recording", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    s.ps.setActive(1);
+    let current = (await s.resolver.resolve(
+        { id: 1, file: "C:" + SEP + "art" + SEP + "v1.psd", bounds: BOUNDS },
+        s.config,
+        true
+    )).session;
+    const folders = [current.folder];
+
+    // v1 -> v2 -> v3 -> v4, each with more drawing in between, which is how
+    // people actually use Save As.
+    let drawn = 0;
+    for (const name of ["v2", "v3", "v4"]) {
+        drawn += 10;
+        writeFrames(s.config, current.sessionId, drawn);
+        current = await s.resolver.forkForSaveAs(
+            { id: 1, file: "C:" + SEP + "art" + SEP + name + ".psd", bounds: BOUNDS },
+            s.config,
+            current
+        );
+        assert.equal(current.manifest.frameCount, drawn, name + " starts from everything drawn so far");
+        folders.push(current.folder);
+    }
+
+    assert.equal(new Set(folders).size, 4, "four names, four recordings");
+    // v1 was left behind at 10 frames; v2 inherited those and grew to 20
+    // before being left behind in turn; v3 to 30. v4 is where the drawing is
+    // now, so it holds everything and nothing has been drawn since.
+    assert.deepEqual(
+        folders.map((f) => fs.readdirSync(f).filter((x) => x.endsWith(".jpg")).length),
+        [10, 20, 30, 30],
+        "each name keeps the drawing exactly as it stood when it was left behind"
+    );
+
+    // Only the newest is attached to the document; the rest are findable by
+    // the file each was left to.
+    assert.equal(s.ps.peek(1).sessionId, current.sessionId);
+    for (const name of ["v1", "v2", "v3"]) {
+        const found = s.index.findByFilePath("C:" + SEP + "art" + SEP + name + ".psd");
+        assert.ok(found, name + ".psd has a recording of its own");
+        assert.notEqual(found.sessionId, current.sessionId);
+    }
+});
+
+test("reopening the file a Save As left behind continues its own recording", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    s.ps.setActive(1);
+    const original = await s.resolver.resolve(
+        { id: 1, file: "C:" + SEP + "art" + SEP + "a.psd", bounds: BOUNDS },
+        s.config,
+        true
+    );
+    writeFrames(s.config, original.session.sessionId, 12);
+    // a.psd on disk holds the id it was stamped with before the fork.
+    const stampedIntoTheFile = s.ps.peek(1);
+
+    const forked = await s.resolver.forkForSaveAs(
+        { id: 1, file: "C:" + SEP + "art" + SEP + "b.psd", bounds: BOUNDS },
+        s.config,
+        original.session
+    );
+    writeFrames(s.config, forked.sessionId, 30);
+
+    // The artist reopens a.psd to take the drawing somewhere else.
+    s.ps.setActive(2);
+    await s.ps.gateway.setActiveDocumentSettings(stampedIntoTheFile);
+    const reopened = await s.resolver.resolve(
+        { id: 2, file: "C:" + SEP + "art" + SEP + "a.psd", bounds: BOUNDS },
+        s.config,
+        true
+    );
+
+    // No branch guard needed any more: the two files hold two different ids,
+    // so a.psd simply picks its own recording back up where it left off.
+    assert.equal(reopened.session.sessionId, original.session.sessionId);
+    assert.equal(reopened.session.isNew, false);
+    assert.equal(reopened.session.manifest.frameCount, 12, "the 30 frames drawn in b.psd are not its own");
+});
+
+/**
+ * What counts as a Save As.
+ *
+ * This one predicate decides whether a recording gets forked, so every way a
+ * document's path can change is worth pinning down. Getting it wrong in either
+ * direction is bad: a missed fork puts two artworks in one folder, a spurious
+ * one splits a recording that should have stayed whole.
+ */
+test("a Save As is a new name for a document whose old file is still there", (t) => {
+    const temp = tempDir();
+    t.after(() => temp.cleanup());
+    const before = path.join(temp.dir, "a.psd");
+    const after = path.join(temp.dir, "b.psd");
+    fs.writeFileSync(before, "psd");
+
+    assert.equal(isSaveAsRename(before, after), true);
+
+    // Saving an untitled document for the first time leaves nothing behind.
+    assert.equal(isSaveAsRename("Untitled-1", after), false);
+    assert.equal(isSaveAsRename(before, "Untitled-1"), false);
+
+    // A plain Ctrl+S does not change the path.
+    assert.equal(isSaveAsRename(before, before), false);
+    if (process.platform === "win32") {
+        // Windows paths are case-insensitive, so a different casing of the same
+        // file is the same file, not a Save As.
+        assert.equal(isSaveAsRename(before, before.toUpperCase()), false);
+    }
+
+    // The old file being gone means it was moved, not copied -- there is no
+    // second artwork to record separately.
+    fs.rmSync(before);
+    assert.equal(isSaveAsRename(before, after), false);
 });

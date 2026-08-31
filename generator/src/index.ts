@@ -39,7 +39,14 @@ import {
     listSessions,
     writeManifest
 } from "./store";
-import { DocInfo, PsGateway, ResolvedSession, SessionResolver, canvasSize } from "./session";
+import {
+    DocInfo,
+    PsGateway,
+    ResolvedSession,
+    SessionResolver,
+    canvasSize,
+    isSaveAsRename
+} from "./session";
 import { Encoder, Pixmap } from "./encoder";
 import { CaptureScheduler, SchedulerStats } from "./capture";
 import { Bridge } from "./bridge";
@@ -461,6 +468,8 @@ class FRecordPlugin {
             }
 
             const config = this.configStore.get();
+            const wasDocumentId = this.activeDocumentId;
+            const wasFile = this.docFile;
             if (info.id !== this.activeDocumentId) {
                 this.activeDocumentId = info.id;
                 this.needsResolve = true;
@@ -473,7 +482,18 @@ class FRecordPlugin {
             const size = canvasSize(this.docBounds);
             this.docTooSmall = size.width * size.height < config.minCanvasPixels;
 
-            if (this.needsResolve || this.resolvedForDocId !== info.id || this.current === null) {
+            // The same document arriving under a different name, with the old
+            // file still on disk, is a Save As -- and a Save As means there are
+            // now two artworks where there was one.
+            const forked =
+                info.id === wasDocumentId &&
+                this.current !== null &&
+                this.resolvedForDocId === info.id &&
+                isSaveAsRename(wasFile, this.docFile)
+                    ? await this.forkForSaveAs(config)
+                    : false;
+
+            if (!forked && (this.needsResolve || this.resolvedForDocId !== info.id || this.current === null)) {
                 await this.resolveSession(config);
             }
 
@@ -483,6 +503,49 @@ class FRecordPlugin {
         } finally {
             this.resyncInFlight = false;
         }
+    }
+
+    /**
+     * Hands the document a copy of its recording and leaves the original to
+     * the file it was saved away from.
+     *
+     * Capture is stopped and `current` dropped for the duration, exactly as in
+     * deleteCurrentSession: a frame landing while the folder is being
+     * duplicated would end up in one branch and not the other, and which one
+     * would depend on timing.
+     *
+     * A failure here leaves the document on the session it already had. Both
+     * files then claim it, which the branch guard in the resolver catches the
+     * next time the old one is opened -- a worse outcome than forking, but not
+     * a broken one, and better than dropping the recording on the floor.
+     */
+    private async forkForSaveAs(config: Config): Promise<boolean> {
+        const from = this.current;
+        const documentId = this.activeDocumentId;
+        if (!from || documentId === null) {
+            return false;
+        }
+
+        this.flushManifest();
+        this.current = null;
+        this.scheduler.discardPending();
+        await this.scheduler.whenIdle();
+
+        const doc: DocInfo = { id: documentId, file: this.docFile, bounds: this.docBounds };
+        try {
+            this.current = await this.resolver.forkForSaveAs(doc, config, from);
+        } catch (e) {
+            this.current = from;
+            this.needsResolve = true;
+            this.log.error("Could not fork the recording after Save As: " + errText(e));
+            return false;
+        }
+        this.resolvedForDocId = documentId;
+        this.needsResolve = false;
+        this.loggedGeometryFor = null;
+        this.lastFrameAt = this.current.manifest.lastModifiedAt || null;
+        this.resumeCandidates = [];
+        return true;
     }
 
     private async resolveSession(config: Config): Promise<void> {

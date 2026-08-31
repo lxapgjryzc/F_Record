@@ -29,12 +29,13 @@ import {
     Config,
     SessionSummary
 } from "../../shared/protocol";
-import { exists, mkdirp, randomHex, timeStampString } from "../../shared/compat";
+import { assign, exists, mkdirp, randomHex, timeStampString } from "../../shared/compat";
 import { sessionFolder } from "../../shared/paths";
 import {
     SessionIndex,
     SessionManifest,
     createManifest,
+    duplicateFrames,
     readManifest,
     writeManifest,
     scanFrames,
@@ -97,6 +98,26 @@ export function documentFilePath(file: string): string | null {
         return null;
     }
     return file;
+}
+
+/**
+ * True when a document that was open as one file is now open as another, with
+ * the first still sitting on disk -- which is what Save As leaves behind.
+ *
+ * Both have to be real paths: an untitled document being saved for the first
+ * time leaves nothing to reopen, so there is nothing to fork. The old file
+ * still existing is what separates Save As from the other ways a path can
+ * change; "Save a Copy" never gets here at all, since it leaves the open
+ * document's own path alone.
+ */
+export function isSaveAsRename(before: string, after: string): boolean {
+    if (documentFilePath(before) === null || documentFilePath(after) === null) {
+        return false;
+    }
+    if (normalizePath(before) === normalizePath(after)) {
+        return false;
+    }
+    return exists(before);
 }
 
 export function canvasSize(bounds: Bounds | null): { width: number; height: number } {
@@ -311,6 +332,59 @@ export class SessionResolver {
         const restamped = await this.stamp(doc.id, sessionId);
         this.log("info", "Adopted session " + sessionId + " for document " + doc.id);
         return this.finish(doc, config, sessionId, docName, filePath, canvasSize(doc.bounds), false, restamped);
+    }
+
+    /**
+     * Splits a recording in two, because Save As splits the artwork in two.
+     *
+     * Save As is not only how a file gets renamed; it is how an artist keeps
+     * a milestone and carries on, or forks one drawing into two endings. The
+     * file left behind on disk is a complete work in its own right and it
+     * already holds this session's id, stamped there before the split -- so
+     * the frames drawn up to this moment belong to both sides.
+     *
+     * Which side keeps the folder is not a free choice. Photoshop only lets
+     * generatorSettings be written to the document that is open, so the copy
+     * has to go to the document in front: it can be stamped immediately, while
+     * the file on disk keeps the id it already carries and, with it, the
+     * original folder. That the folders end up named after their files is a
+     * happy side effect.
+     *
+     * The frames are hard-linked where the filesystem allows, so forking a
+     * 10,000 frame recording costs neither the disk space nor the wait a real
+     * copy would -- see duplicateFile. Both folders are still independent:
+     * either can be deleted or exported without the other noticing.
+     */
+    async forkForSaveAs(doc: DocInfo, config: Config, from: ResolvedSession): Promise<ResolvedSession> {
+        const filePath = documentFilePath(doc.file);
+        const docName = documentDisplayName(doc.file);
+        const sessionId = newSessionId();
+        const folder = sessionFolder(config.processImageFolderPath, sessionId);
+
+        const duplicated = await duplicateFrames(from.folder, folder, this.log);
+
+        // The copy inherits what the drawing has accumulated -- when it began,
+        // how long it has taken -- but none of the paths. Those belong to the
+        // file that kept the original folder; sharing them would make reopening
+        // that file ambiguous between the two recordings.
+        const manifest = assign({} as SessionManifest, from.manifest);
+        manifest.sessionId = sessionId;
+        manifest.docName = docName;
+        manifest.filePathHistory = [];
+        manifest.lastModifiedAt = Date.now();
+        writeManifest(folder, manifest);
+
+        // The document has moved to the copy. The session it came from keeps
+        // its own file paths, so reopening the file left behind still finds it.
+        this.index.detachDocument(from.sessionId, doc.id);
+        await this.stamp(doc.id, sessionId);
+
+        this.log(
+            "info",
+            "Save As forked session " + from.sessionId + " into " + sessionId + " for '" + docName +
+                "' (" + duplicated.frameCount + " frames by " + duplicated.mode + ")"
+        );
+        return this.finish(doc, config, sessionId, docName, filePath, canvasSize(doc.bounds), false, false);
     }
 
     /** Forces a brand new session, abandoning whatever the document pointed at. */

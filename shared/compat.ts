@@ -29,6 +29,7 @@ function nodeAtLeast(major: number, minor: number): boolean {
 const HAS_RECURSIVE_MKDIR = nodeAtLeast(10, 12);
 const HAS_RM = nodeAtLeast(14, 14);
 const HAS_RECURSIVE_RMDIR = nodeAtLeast(12, 10);
+const HAS_COPY_FILE = nodeAtLeast(8, 5);
 
 export function exists(target: string): boolean {
     try {
@@ -103,6 +104,42 @@ export function rmrf(target: string): void {
     } catch (e) {
         /* raced with another delete */
     }
+}
+
+/** How duplicateFile got the bytes to the other path. */
+export type DuplicateMode = "link" | "copy";
+
+/**
+ * Puts the contents of `source` at `dest` as cheaply as the filesystem allows.
+ *
+ * A hard link is tried first. A frame is written once and never touched again,
+ * so two directory entries pointing at one set of bytes behave exactly like two
+ * copies -- either folder can be deleted, renamed or exported from without the
+ * other noticing -- while costing no disk space and no time. That matters
+ * because the same recording gets duplicated again on every Save As, and a
+ * habit of saving each milestone under a new name would otherwise multiply a
+ * few gigabytes of frames by the number of milestones.
+ *
+ * Links are refused by exFAT and by network shares, and never work across
+ * volumes. Those fall back to a real byte copy, which is correct but slow;
+ * callers report which one happened so the log says where the time went.
+ */
+export function duplicateFile(source: string, dest: string): DuplicateMode {
+    try {
+        fs.linkSync(source, dest);
+        return "link";
+    } catch (e) {
+        copyFileContents(source, dest);
+        return "copy";
+    }
+}
+
+function copyFileContents(source: string, dest: string): void {
+    if (HAS_COPY_FILE) {
+        fs.copyFileSync(source, dest);
+        return;
+    }
+    fs.writeFileSync(dest, fs.readFileSync(source));
 }
 
 let atomicCounter = 0;
@@ -221,7 +258,8 @@ export const nodeVersionInfo = {
     minor: NODE_VERSION[1],
     hasRecursiveMkdir: HAS_RECURSIVE_MKDIR,
     hasRm: HAS_RM,
-    hasRecursiveRmdir: HAS_RECURSIVE_RMDIR
+    hasRecursiveRmdir: HAS_RECURSIVE_RMDIR,
+    hasCopyFile: HAS_COPY_FILE
 };
 
 /**
@@ -247,6 +285,9 @@ export function describeNodeCompat(): string {
     }
     if (!HAS_RECURSIVE_RMDIR) {
         fallbacks.push("rmdir");
+    }
+    if (!HAS_COPY_FILE) {
+        fallbacks.push("copyFile");
     }
     const version = "Node " + NODE_VERSION[0] + "." + NODE_VERSION[1];
     return version + (fallbacks.length ? " (fallbacks: " + fallbacks.join(", ") + ")" : " (no fallbacks)");

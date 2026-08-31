@@ -25,7 +25,8 @@ import {
     timeStampString,
     randomHex,
     nodeVersionInfo,
-    describeNodeCompat
+    describeNodeCompat,
+    duplicateFile
 } from "../dist/test/compat.mjs";
 import { frameFileName, parseFrameFileName, parseFrameList, parseLegacyFrameFileName } from "../dist/test/paths.mjs";
 import { tempDir } from "./helpers.mjs";
@@ -200,4 +201,55 @@ test("describeNodeCompat names the Node and the fallbacks it forces", () => {
     assert.equal(claimsNone, allModern, "the summary matches the detected flags");
 
     assert.equal(text.indexOf(String(nodeVersionInfo.major)), 5, "reports the real major version");
+});
+
+/**
+ * duplicateFile is what makes forking a recording on Save As affordable.
+ *
+ * A hard link is not a shortcut with caveats here: a frame is written once and
+ * never touched again, so two names for one set of bytes behave exactly like
+ * two copies. The properties that have to hold are that the bytes match and
+ * that the folders are independent -- deleting one must not disturb the other.
+ */
+test("duplicateFile puts identical bytes at the other path", (t) => {
+    const temp = tempDir();
+    t.after(() => temp.cleanup());
+    const source = path.join(temp.dir, "000001_1700000001000.jpg");
+    const dest = path.join(temp.dir, "copy.jpg");
+    const bytes = Buffer.from([0xff, 0xd8, 1, 2, 3, 0xff, 0xd9]);
+    fs.writeFileSync(source, bytes);
+
+    const mode = duplicateFile(source, dest);
+
+    assert.ok(mode === "link" || mode === "copy", "reports how it got there: " + mode);
+    assert.deepEqual(fs.readFileSync(dest), bytes);
+});
+
+test("deleting one of the two names leaves the other readable", (t) => {
+    const temp = tempDir();
+    t.after(() => temp.cleanup());
+    const source = path.join(temp.dir, "frame.jpg");
+    const dest = path.join(temp.dir, "forked.jpg");
+    fs.writeFileSync(source, "frame");
+
+    duplicateFile(source, dest);
+    fs.rmSync(source);
+
+    assert.equal(fs.readFileSync(dest, "utf8"), "frame", "the fork survives its origin");
+    assert.equal(fs.existsSync(source), false);
+});
+
+test("duplicateFile reports a real copy when it cannot link", (t) => {
+    const temp = tempDir();
+    t.after(() => temp.cleanup());
+    const source = path.join(temp.dir, "frame.jpg");
+    fs.writeFileSync(source, "frame");
+
+    // Linking onto an existing name fails, which is the same door the exFAT
+    // and network-share cases come through: it must fall back, not throw.
+    const dest = path.join(temp.dir, "taken.jpg");
+    fs.writeFileSync(dest, "old");
+
+    assert.equal(duplicateFile(source, dest), "copy");
+    assert.equal(fs.readFileSync(dest, "utf8"), "frame");
 });
