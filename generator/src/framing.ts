@@ -75,10 +75,3 @@ export function computePadding(
 function nonNegative(value: number): number {
     return value > 0 ? value : 0;
 }
-
-export function boundsEqual(a: Bounds | null, b: Bounds | null): boolean {
-    if (!a || !b) {
-        return a === b;
-    }
-    return a.left === b.left && a.top === b.top && a.right === b.right && a.bottom === b.bottom;
-}

@@ -33,13 +33,11 @@ export const dict: Record<string, string> = {
     "stat.time": "Затрачено времени",
     "stat.capture": "Съёмка",
     "stat.interval": "каждые {0}",
-    "stat.encoder.native": "кодировщик Photoshop",
     "stat.encoder.js": "запасной кодировщик",
 
     "resume.title": "Продолжить предыдущую запись?",
     "resume.body":
         "Размер холста совпадает с вашими прежними записями. Можно продолжить одну из них или начать заново.",
-    "resume.continue": "Продолжить",
     "resume.fresh": "Начать заново",
     "resume.frames": "кадров: {0}",
 
@@ -97,7 +95,6 @@ export const dict: Record<string, string> = {
     "settings.autoNew.hint": "Если выключено, каждый документ нужно запускать вручную.",
     "settings.language": "Язык",
     "settings.language.auto": "Как в Photoshop",
-    "settings.about": "О программе",
 
     "update.setting": "Проверять обновления",
     "update.setting.hint":
@@ -114,15 +111,10 @@ export const dict: Record<string, string> = {
     "issue.hint": "Открывает трекер проблем проекта на GitHub в браузере.",
 
     "unit.minute": "мин",
-    "unit.second": "с",
     "unit.hour": "ч",
     "unit.minuteShort": "м",
     "unit.secondShort": "с",
     "unit.ms": "мс",
 
-    "common.details": "Подробности",
     "common.dismiss": "Закрыть",
-    "common.cancel": "Отмена",
-    "common.delete": "Удалить",
-    "common.never": "никогда"
 };

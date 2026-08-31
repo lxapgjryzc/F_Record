@@ -647,7 +647,6 @@ class FRecordPlugin {
             droppedFrames: stats.droppedFrames,
             consecutiveFailures: stats.consecutiveFailures,
             encoder: this.encoder.getKind(),
-            lastError: null,
             pausedReason: stats.pausedReason
         };
     }
@@ -692,8 +691,7 @@ class FRecordPlugin {
                 protocolVersion: PROTOCOL_VERSION,
                 pid: process.pid,
                 startedAt: this.startedAt,
-                photoshopVersion: this.photoshopVersion,
-                generatorCoreVersion: null
+                photoshopVersion: this.photoshopVersion
             },
             config: config,
             document: document,

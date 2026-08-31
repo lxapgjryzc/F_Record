@@ -33,13 +33,11 @@ export const dict: Record<string, string> = {
     "stat.time": "Arbeitszeit",
     "stat.capture": "Aufnahme",
     "stat.interval": "alle {0}",
-    "stat.encoder.native": "Photoshop-Encoder",
     "stat.encoder.js": "Ersatz-Encoder",
 
     "resume.title": "Frühere Aufnahme fortsetzen?",
     "resume.body":
         "Diese Arbeitsfläche passt zu Aufnahmen von früher. Setzen Sie eine davon fort oder beginnen Sie neu.",
-    "resume.continue": "Fortsetzen",
     "resume.fresh": "Neu beginnen",
     "resume.frames": "{0} Bilder",
 
@@ -97,7 +95,6 @@ export const dict: Record<string, string> = {
     "settings.autoNew.hint": "Wenn aus, muss jedes Dokument von Hand gestartet werden.",
     "settings.language": "Sprache",
     "settings.language.auto": "Wie Photoshop",
-    "settings.about": "Über",
 
     "update.setting": "Nach Updates suchen",
     "update.setting.hint":
@@ -114,15 +111,10 @@ export const dict: Record<string, string> = {
     "issue.hint": "Öffnet den Issue-Tracker des Projekts auf GitHub im Browser.",
 
     "unit.minute": "Min.",
-    "unit.second": "s",
     "unit.hour": "Std.",
     "unit.minuteShort": "m",
     "unit.secondShort": "s",
     "unit.ms": "ms",
 
-    "common.details": "Details",
     "common.dismiss": "Schließen",
-    "common.cancel": "Abbrechen",
-    "common.delete": "Löschen",
-    "common.never": "nie"
 };

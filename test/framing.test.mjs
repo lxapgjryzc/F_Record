@@ -9,7 +9,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computeMaxDimension, computePadding, boundsEqual } from "../dist/test/framing.mjs";
+import { computeMaxDimension, computePadding } from "../dist/test/framing.mjs";
 
 const CANVAS = { top: 0, left: 0, right: 4000, bottom: 3000 };
 
@@ -77,11 +77,4 @@ test("missing or empty pixmap bounds fall back to no padding rather than NaN", (
         { left: 0, top: 0, right: 0, bottom: 0 }
     );
     assert.deepEqual(computePadding(CANVAS, CANVAS, 0, 0), { left: 0, top: 0, right: 0, bottom: 0 });
-});
-
-test("boundsEqual compares by value and handles nulls", () => {
-    assert.equal(boundsEqual(CANVAS, { ...CANVAS }), true);
-    assert.equal(boundsEqual(CANVAS, { ...CANVAS, right: 1 }), false);
-    assert.equal(boundsEqual(null, null), true);
-    assert.equal(boundsEqual(CANVAS, null), false);
 });

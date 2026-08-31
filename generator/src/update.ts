@@ -261,7 +261,6 @@ export class UpdateChecker {
             latestVersion: this.latest.version,
             url: this.latest.url,
             publishedAt: this.latest.publishedAt,
-            checkedAt: this.lastCheckedAt,
             dismissed: this.options.dismissedVersion() === this.latest.version
         };
     }

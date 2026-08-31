@@ -4,8 +4,8 @@
  * Both sides are bundled separately, so this file must not import anything.
  */
 
-/** Bumped for 5: Language widened, update fields added to Config and State. */
-export const PROTOCOL_VERSION = 5;
+/** Bumped for 6: three write-only fields removed from the state payload. */
+export const PROTOCOL_VERSION = 6;
 export const PLUGIN_NAME = "F_Record";
 
 /** Where users are asked to file bugs, and where update checks look. */
@@ -119,7 +119,6 @@ export interface GeneratorInfo {
     pid: number;
     startedAt: number;
     photoshopVersion: string | null;
-    generatorCoreVersion: string | null;
 }
 
 export interface DocumentState {
@@ -153,7 +152,6 @@ export interface HealthState {
     droppedFrames: number;
     consecutiveFailures: number;
     encoder: EncoderKind;
-    lastError: { message: string; at: number } | null;
     /** Set when recording auto-paused itself; surfaced verbatim in the panel. */
     pausedReason: string | null;
 }
@@ -164,7 +162,6 @@ export interface UpdateState {
     /** Release page to open; never a direct download. */
     url: string;
     publishedAt: number | null;
-    checkedAt: number;
     /** True once the user dismissed this exact version. */
     dismissed: boolean;
 }

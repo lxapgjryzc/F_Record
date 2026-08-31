@@ -308,10 +308,6 @@ export class SessionIndex {
         this.entries = Array.isArray(file.entries) ? file.entries : [];
     }
 
-    all(): IndexEntry[] {
-        return this.entries;
-    }
-
     find(sessionId: string): IndexEntry | null {
         for (let i = 0; i < this.entries.length; i++) {
             if (this.entries[i].sessionId === sessionId) {

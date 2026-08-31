@@ -28,12 +28,10 @@ export const dict: Record<string, string> = {
     "stat.time": "用时",
     "stat.capture": "抓帧",
     "stat.interval": "每 {0}",
-    "stat.encoder.native": "Photoshop 编码器",
     "stat.encoder.js": "备用编码器",
 
     "resume.title": "继续之前的录制？",
     "resume.body": "这个画布尺寸和你之前的录制相符。可以接着录，也可以新建一个。",
-    "resume.continue": "继续",
     "resume.fresh": "新建",
     "resume.frames": "{0} 帧",
 
@@ -86,7 +84,6 @@ export const dict: Record<string, string> = {
     "settings.autoNew.hint": "关闭后，每个文档都需要手动开始。",
     "settings.language": "语言",
     "settings.language.auto": "跟随 Photoshop",
-    "settings.about": "关于",
 
     "update.setting": "检查更新",
     "update.setting.hint": "大约每天向 GitHub 查询一次有没有新版本。默认关闭。不会发送任何与你或你的作品有关的信息。",
@@ -102,15 +99,10 @@ export const dict: Record<string, string> = {
     "issue.hint": "在浏览器里打开 GitHub 上的问题反馈页。",
 
     "unit.minute": "分钟",
-    "unit.second": "秒",
     "unit.hour": "时",
     "unit.minuteShort": "分",
     "unit.secondShort": "秒",
     "unit.ms": "毫秒",
 
-    "common.details": "详情",
     "common.dismiss": "关闭",
-    "common.cancel": "取消",
-    "common.delete": "删除",
-    "common.never": "从不"
 };

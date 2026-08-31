@@ -32,12 +32,10 @@ export const dict: Record<string, string> = {
     "stat.time": "작업 시간",
     "stat.capture": "캡처",
     "stat.interval": "{0}마다",
-    "stat.encoder.native": "Photoshop 인코더",
     "stat.encoder.js": "대체 인코더",
 
     "resume.title": "이전 기록을 이어서 할까요?",
     "resume.body": "이 캔버스 크기가 이전 기록과 일치합니다. 이어서 기록하거나 새로 시작할 수 있습니다.",
-    "resume.continue": "이어서",
     "resume.fresh": "새로 시작",
     "resume.frames": "{0}개 프레임",
 
@@ -91,7 +89,6 @@ export const dict: Record<string, string> = {
     "settings.autoNew.hint": "끄면 문서마다 직접 시작해야 합니다.",
     "settings.language": "언어",
     "settings.language.auto": "Photoshop 따르기",
-    "settings.about": "정보",
 
     "update.setting": "업데이트 확인",
     "update.setting.hint":
@@ -108,15 +105,10 @@ export const dict: Record<string, string> = {
     "issue.hint": "GitHub의 문제 보고 페이지를 브라우저에서 엽니다.",
 
     "unit.minute": "분",
-    "unit.second": "초",
     "unit.hour": "시간",
     "unit.minuteShort": "분",
     "unit.secondShort": "초",
     "unit.ms": "밀리초",
 
-    "common.details": "세부 정보",
     "common.dismiss": "닫기",
-    "common.cancel": "취소",
-    "common.delete": "삭제",
-    "common.never": "안 함"
 };

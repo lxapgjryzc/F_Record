@@ -33,13 +33,11 @@ export const dict: Record<string, string> = {
     "stat.time": "Tempo gasto",
     "stat.capture": "Captura",
     "stat.interval": "a cada {0}",
-    "stat.encoder.native": "codificador do Photoshop",
     "stat.encoder.js": "codificador reserva",
 
     "resume.title": "Continuar uma gravação anterior?",
     "resume.body":
         "Esta tela corresponde a gravações que você fez antes. Continue uma delas ou comece do zero.",
-    "resume.continue": "Continuar",
     "resume.fresh": "Começar do zero",
     "resume.frames": "{0} quadros",
 
@@ -97,7 +95,6 @@ export const dict: Record<string, string> = {
     "settings.autoNew.hint": "Quando desligado, cada documento precisa ser iniciado à mão.",
     "settings.language": "Idioma",
     "settings.language.auto": "Igual ao Photoshop",
-    "settings.about": "Sobre",
 
     "update.setting": "Verificar atualizações",
     "update.setting.hint":
@@ -114,15 +111,10 @@ export const dict: Record<string, string> = {
     "issue.hint": "Abre no navegador a página de problemas do projeto no GitHub.",
 
     "unit.minute": "min",
-    "unit.second": "s",
     "unit.hour": "h",
     "unit.minuteShort": "m",
     "unit.secondShort": "s",
     "unit.ms": "ms",
 
-    "common.details": "Detalhes",
     "common.dismiss": "Fechar",
-    "common.cancel": "Cancelar",
-    "common.delete": "Excluir",
-    "common.never": "nunca"
 };

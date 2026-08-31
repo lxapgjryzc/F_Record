@@ -32,12 +32,10 @@ export const dict: Record<string, string> = {
     "stat.time": "作業時間",
     "stat.capture": "キャプチャ",
     "stat.interval": "{0} ごと",
-    "stat.encoder.native": "Photoshop エンコーダー",
     "stat.encoder.js": "代替エンコーダー",
 
     "resume.title": "前回の記録を続けますか？",
     "resume.body": "このカンバスサイズは以前の記録と一致します。続きから記録するか、新しく始めることができます。",
-    "resume.continue": "続ける",
     "resume.fresh": "新規に開始",
     "resume.frames": "{0} フレーム",
 
@@ -91,7 +89,6 @@ export const dict: Record<string, string> = {
     "settings.autoNew.hint": "オフにすると、ドキュメントごとに手動で開始する必要があります。",
     "settings.language": "言語",
     "settings.language.auto": "Photoshop に合わせる",
-    "settings.about": "情報",
 
     "update.setting": "アップデートを確認",
     "update.setting.hint":
@@ -108,15 +105,10 @@ export const dict: Record<string, string> = {
     "issue.hint": "GitHub の問題報告ページをブラウザーで開きます。",
 
     "unit.minute": "分",
-    "unit.second": "秒",
     "unit.hour": "時間",
     "unit.minuteShort": "分",
     "unit.secondShort": "秒",
     "unit.ms": "ミリ秒",
 
-    "common.details": "詳細",
     "common.dismiss": "閉じる",
-    "common.cancel": "キャンセル",
-    "common.delete": "削除",
-    "common.never": "しない"
 };

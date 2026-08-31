@@ -73,14 +73,6 @@ export class BridgeClient {
         this.destroyStream();
     }
 
-    getStatus(): ConnectionStatus {
-        return this.status;
-    }
-
-    isConnected(): boolean {
-        return this.status === "connected";
-    }
-
     /** Sends a command. Rejects when the generator is unreachable. */
     send(command: Command): Promise<CommandResult> {
         const info = this.info;
