@@ -63,6 +63,8 @@ export const dict: Record<string, string> = {
     "export.open": "Открыть",
     "export.noFrames": "В этой записи пока нет кадров",
 
+    "toast.dismiss": "Закрыть",
+
     "sessions.empty": "Записей пока нет",
     "sessions.frames": "кадров: {0} · {1}",
     "sessions.open": "Открыть папку",

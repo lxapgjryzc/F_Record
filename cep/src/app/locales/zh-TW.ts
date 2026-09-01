@@ -56,6 +56,8 @@ export const dict: Record<string, string> = {
     "export.open": "開啟",
     "export.noFrames": "這段錄製還沒有影格",
 
+    "toast.dismiss": "關閉",
+
     "sessions.empty": "還沒有錄影",
     "sessions.frames": "{0} 個影格 · {1}",
     "sessions.open": "開啟資料夾",

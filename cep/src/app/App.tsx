@@ -458,7 +458,7 @@ export function App(): JSX.Element {
                 />
             ) : null}
 
-            <Toasts toasts={toasts} onDismiss={dismissToast} />
+            <Toasts toasts={toasts} onDismiss={dismissToast} dismissLabel={t("toast.dismiss")} />
         </div>
     );
 }

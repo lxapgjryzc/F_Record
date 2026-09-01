@@ -181,8 +181,14 @@ export function runExport(
         );
 
         const temp = exportTempDir();
-        // Start from a clean temp directory; a previous run may have died.
-        rmrf(temp);
+        // Make sure the scratch dir exists, but do NOT wipe it: the caller
+        // stages the bookend still (finalImagePath) inside this same directory
+        // before calling us. Wiping it here -- as an earlier version did --
+        // deleted that file *after* hasBookends had already been latched true
+        // above, so ffmpeg was handed a path to a final.jpg that no longer
+        // existed and died with "No such file or directory". frames.txt is
+        // rewritten in full every run, and a successful encode clears the whole
+        // directory below, so there is nothing to gain from a pre-wipe here.
         mkdirp(temp);
         const listPath = path.join(temp, "frames.txt");
         writeFileAtomic(listPath, listText);

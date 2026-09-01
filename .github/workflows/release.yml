@@ -1,0 +1,68 @@
+# Publishes a GitHub release whenever a version tag is pushed.
+#
+# The release matches what was previously produced by hand:
+#   - tag       vX.Y.Z
+#   - title     F_Record X.Y.Z
+#   - asset     F_Record-X.Y.Z.zip  (the whole dist/ tree, built here)
+#   - body      RELEASE_NOTES.md
+#
+# Runs on Windows because scripts/build.mjs zips the archive with
+# Compress-Archive, and installs with `npm install` because package-lock.json
+# is intentionally gitignored (so `npm ci`, which requires the lockfile, is not
+# an option here).
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Verify the tag matches package.json
+        id: pkg
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tag = "${{ github.ref_name }}"
+          if ($tag -ne "v$version") {
+            Write-Error "Tag '$tag' does not match package.json version '$version' (expected 'v$version'). Bump package.json or retag."
+            exit 1
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Build the release archive
+        run: node scripts/build.mjs --zip
+
+      - name: Create the GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = "${{ steps.pkg.outputs.version }}"
+          $asset = "release/F_Record-$version.zip"
+          if (-not (Test-Path $asset)) {
+            Write-Error "Expected archive '$asset' was not produced by the build."
+            exit 1
+          }
+          gh release create "${{ github.ref_name }}" `
+            "$asset" `
+            --title "F_Record $version" `
+            --notes-file RELEASE_NOTES.md

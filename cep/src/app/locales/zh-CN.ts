@@ -56,6 +56,8 @@ export const dict: Record<string, string> = {
     "export.open": "打开",
     "export.noFrames": "这段录制还没有帧",
 
+    "toast.dismiss": "关闭",
+
     "sessions.empty": "还没有录像",
     "sessions.frames": "{0} 帧 · {1}",
     "sessions.open": "打开文件夹",

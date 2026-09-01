@@ -63,6 +63,8 @@ export const dict: Record<string, string> = {
     "export.open": "Öffnen",
     "export.noFrames": "Diese Aufnahme enthält noch keine Bilder",
 
+    "toast.dismiss": "Schließen",
+
     "sessions.empty": "Noch keine Aufnahmen",
     "sessions.frames": "{0} Bilder · {1}",
     "sessions.open": "Ordner öffnen",

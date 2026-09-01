@@ -61,6 +61,8 @@ export const dict: Record<string, string> = {
     "export.open": "開く",
     "export.noFrames": "この記録にはまだフレームがありません",
 
+    "toast.dismiss": "閉じる",
+
     "sessions.empty": "記録はまだありません",
     "sessions.frames": "{0} フレーム · {1}",
     "sessions.open": "フォルダーを開く",

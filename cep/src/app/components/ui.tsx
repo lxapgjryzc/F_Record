@@ -174,7 +174,11 @@ export interface Toast {
     onAction?: () => void;
 }
 
-export function Toasts(props: { toasts: Toast[]; onDismiss: (id: number) => void }): JSX.Element | null {
+export function Toasts(props: {
+    toasts: Toast[];
+    onDismiss: (id: number) => void;
+    dismissLabel: string;
+}): JSX.Element | null {
     if (props.toasts.length === 0) {
         return null;
     }
@@ -196,7 +200,20 @@ export function Toasts(props: { toasts: Toast[]; onDismiss: (id: number) => void
                         >
                             {toast.actionLabel}
                         </button>
-                    ) : null}
+                    ) : (
+                        // Errors never auto-clear (see pushToast), so without
+                        // this they would stay on screen with no way to close
+                        // them. Give every actionless toast an explicit ✕.
+                        <button
+                            type="button"
+                            class="toast-close"
+                            title={props.dismissLabel}
+                            aria-label={props.dismissLabel}
+                            onClick={() => props.onDismiss(toast.id)}
+                        >
+                            ✕
+                        </button>
+                    )}
                 </div>
             ))}
         </div>

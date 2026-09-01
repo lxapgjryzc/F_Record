@@ -61,6 +61,8 @@ export const dict: Record<string, string> = {
     "export.open": "열기",
     "export.noFrames": "이 기록에는 아직 프레임이 없습니다",
 
+    "toast.dismiss": "닫기",
+
     "sessions.empty": "아직 기록이 없습니다",
     "sessions.frames": "{0}개 프레임 · {1}",
     "sessions.open": "폴더 열기",
