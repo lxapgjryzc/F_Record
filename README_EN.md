@@ -151,9 +151,12 @@ fixed here:
    event-driven, and asks for `imageInfo` only — `layerInfo`, `compInfo` and
    `getTextStyles` are all switched off.
 2. **Four document-info passes and two pixmap renders per frame.** It is now
-   exactly **one** pixmap call, using `clipToDocumentBounds` so Photoshop crops
-   to the canvas itself. That removes the old boundsOnly pre-pass and an entire
-   block of padding/extract arithmetic.
+   exactly **one** pixmap call, using `inputRect` + `outputRect` +
+   `clipToDocumentBounds` together so Photoshop crops to the canvas and renders
+   it at the size asked for. That removes the old boundsOnly pre-pass and an
+   entire block of padding/extract arithmetic. All three settings are required:
+   with `maxDimension` in the request instead, `clipToDocumentBounds` is
+   silently ignored -- which is what caused the padding bug that 4.3.0 fixes.
 3. **`isGettingImage` could stick at true forever.** The old `catch (error) { throw error }`
    sat above the reset, so one throw from the JSON bookkeeping killed recording
    for the rest of the Photoshop session. Every capture now has a 30-second

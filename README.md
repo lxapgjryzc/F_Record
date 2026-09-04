@@ -130,9 +130,11 @@ Português (Brasil) · Русский
    `getDocumentInfo()`，用的是默认参数 —— 那会在 Photoshop 主线程上用 ExtendScript
    把每一个图层走一遍。现在改成事件驱动，并且把 `layerInfo` / `compInfo` / `getTextStyles`
    全部关掉，只要 `imageInfo`（就是画布尺寸和文件路径）。
-2. **每帧 4 次文档信息 + 2 次 pixmap。** 现在每帧只有 **1 次** pixmap 调用，
-   靠 `clipToDocumentBounds` 让 Photoshop 自己裁到画布，省掉了旧代码那个
-   boundsOnly 预取和一整段 padding/extract 算术。
+2. **每帧 4 次文档信息 + 2 次 pixmap。** 现在每帧只有 **1 次** pixmap 调用：
+   用 `inputRect` + `outputRect` + `clipToDocumentBounds` 三件套让 Photoshop 自己
+   裁到画布并按指定尺寸渲染，省掉了旧代码那个 boundsOnly 预取和一整段
+   padding/extract 算术。三个参数缺一不可 —— 只给 `maxDimension` 的话
+   `clipToDocumentBounds` 会被静默忽略，这正是 4.2.1 及更早那个补白 bug 的根因。
 3. **`isGettingImage` 会永久卡在 true。** 旧代码的 `catch (error) { throw error }` 写在复位之前，
    JSON 读写一抛异常，这个标志就再也回不来了，录制静默死亡直到重启 PS。
    现在每次抓帧都有 30 秒看门狗，标志在 `finally` 里无条件复位。

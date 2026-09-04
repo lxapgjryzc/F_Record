@@ -300,8 +300,19 @@ test("the pixmap is requested clipped to the canvas, and downscaled", async (t) 
     assert.equal(h.ps.calls.pixmap.length, 1);
 
     const options = h.ps.calls.pixmap[0].options;
-    assert.equal(options.clipToDocumentBounds, true, "Photoshop crops, so we never need to");
-    assert.ok(options.maxDimension > 0 && options.maxDimension <= 800, "downscaled for 360p");
+    // All three together, or Photoshop ignores the lot: measured on 2026,
+    // `clipToDocumentBounds` does nothing while `maxDimension` is present, and
+    // `outputRect` is ignored without `inputRect` beside it.
+    assert.ok(options.inputRect, "the canvas is named explicitly");
+    assert.ok(options.outputRect, "and the size to render it at");
+    assert.equal(options.clipToDocumentBounds, true, "so Photoshop crops and we never need to");
+    assert.equal(options.maxDimension, undefined, "maxDimension would switch the clipping back off");
+
+    const longest = Math.max(
+        options.outputRect.right - options.outputRect.left,
+        options.outputRect.bottom - options.outputRect.top
+    );
+    assert.ok(longest > 0 && longest <= 800, "downscaled for 360p");
 });
 
 test("a burst of change events produces one capture, not one per event", async (t) => {

@@ -1,6 +1,6 @@
 /**
- * Pure geometry for a capture: how far to downscale, and where the pixels
- * Photoshop returned sit inside the canvas.
+ * Pure geometry for a capture: what rectangle to ask Photoshop for, and where
+ * the pixels it returns sit inside that rectangle.
  *
  * Kept free of Photoshop calls so it can be unit tested; see test/framing.test.mjs.
  */
@@ -17,7 +17,7 @@ export function boundsHeight(bounds: Bounds): number {
 }
 
 /**
- * The longest side we ask Photoshop for.
+ * The longest side we want a capture to have.
  *
  * The target is "about as many pixels as a 16:9 frame of the chosen height",
  * so a square canvas and a panoramic one cost roughly the same to capture and
@@ -39,115 +39,105 @@ export function computeMaxDimension(bounds: Bounds, resolution: Resolution): num
 }
 
 /**
- * Padding that re-seats a returned pixmap inside the full canvas.
+ * The rectangle Photoshop is asked to render the canvas into: the whole canvas
+ * scaled down to `computeMaxDimension`, anchored at the origin.
  *
- * Photoshop returns only the pixels that exist -- an artist three strokes into
- * a large canvas gets a small pixmap. Without this the recording would appear
- * to zoom as the painted area grew. `clipToDocumentBounds` guarantees the
- * pixmap never extends past the canvas, so padding alone is enough and no
- * cropping is needed.
+ * Asking with an explicit `outputRect` rather than `maxDimension` is what makes
+ * the rest of this file simple, and it is not interchangeable with it --
+ * measured on Photoshop 2026, against an 8000x2000 canvas whose layers reached
+ * 2246px above and below it:
  *
- * The scale Photoshop applied is recovered from the pixmap: `pixmapWidth`
- * counts output pixels while `pixmapBounds` is documented to count *document*
- * pixels, so their ratio is the scale. `maxDimension` is the cap that was
- * asked for, and it is what tells apart the one case where that documented
- * contract does not hold -- see `isScaledWholeDocument`.
+ *   clipToDocumentBounds + maxDimension     2880x2247, bounds 0,0 -> 2880,2247
+ *   inputRect/outputRect + maxDimension     2880x2247, bounds 0,0 -> 2880,2247
+ *   outputRect without inputRect            8322x6492   (the request is ignored)
+ *   inputRect + outputRect + clip           2880x720,  bounds 0,0 -> 2880,720
+ *
+ * Only the last is the canvas. `clipToDocumentBounds` does not clip anything
+ * while `maxDimension` is in the request, and `outputRect` is ignored unless
+ * `inputRect` comes with it -- so the frames came back holding the union of
+ * the layers, at a scale that had to be guessed at from `pixmap.bounds`. That
+ * guess is what wrote 169 frames of an 8000px-wide canvas with the drawing in
+ * the left third and the rest white.
+ *
+ * With this rect the scale is one we chose rather than one we infer, and
+ * Photoshop reports the returned pixels in that same space -- so seating them
+ * is subtraction, with nothing left to get wrong.
  */
-export function computePadding(
-    docBounds: Bounds,
-    pixmapBounds: Bounds | null | undefined,
-    pixmapWidth: number,
-    pixmapHeight: number,
-    maxDimension: number
-): Padding {
-    if (!pixmapBounds) {
-        return NO_PADDING;
+export function computeOutputRect(docBounds: Bounds, resolution: Resolution): Bounds {
+    const width = boundsWidth(docBounds);
+    const height = boundsHeight(docBounds);
+    if (width <= 0 || height <= 0) {
+        return { top: 0, left: 0, right: 1, bottom: 1 };
     }
-    const sourceWidth = boundsWidth(pixmapBounds);
-    const sourceHeight = boundsHeight(pixmapBounds);
-    if (sourceWidth <= 0 || sourceHeight <= 0 || pixmapWidth <= 0 || pixmapHeight <= 0) {
-        return NO_PADDING;
-    }
-    if (isScaledWholeDocument(docBounds, pixmapBounds, pixmapWidth, pixmapHeight, maxDimension)) {
-        // The pixmap already *is* the whole canvas, so there is nothing to
-        // re-seat. Falling through would read a scale of 1 off bounds that are
-        // not at scale 1 and pad the frame out to full document size.
-        return NO_PADDING;
-    }
-    const scaleX = pixmapWidth / sourceWidth;
-    const scaleY = pixmapHeight / sourceHeight;
-
+    const maxDimension = computeMaxDimension(docBounds, resolution);
+    const scale = Math.min(1, maxDimension / Math.max(width, height));
     return {
-        left: nonNegative(Math.round((pixmapBounds.left - docBounds.left) * scaleX)),
-        top: nonNegative(Math.round((pixmapBounds.top - docBounds.top) * scaleY)),
-        right: nonNegative(Math.round((docBounds.right - pixmapBounds.right) * scaleX)),
-        bottom: nonNegative(Math.round((docBounds.bottom - pixmapBounds.bottom) * scaleY))
+        top: 0,
+        left: 0,
+        right: Math.max(1, Math.round(width * scale)),
+        bottom: Math.max(1, Math.round(height * scale))
     };
 }
 
 /**
- * True when `pixmapBounds` is the whole canvas measured in the *returned
- * pixmap's* pixels rather than the document's.
+ * Padding that seats a returned pixmap inside the requested rectangle.
  *
- * Photoshop is documented to report `pixmap.bounds` in document coordinates
- * (generator-core: "essentially document.layers[i].bounds"), and everything
- * above depends on that. Measured on Photoshop 2026, a `maxDimension` request
- * that forces a downscale breaks it: a 7513x4617 canvas capped at 1837 comes
- * back as a 1837x1129 pixmap whose bounds are 0,0,1837,1129 as well -- the
- * document rectangle, already scaled.
+ * Photoshop returns only the pixels that exist -- an artist three strokes into
+ * a large canvas gets a small pixmap, and `pixmap.bounds` says where in
+ * `outputRect` those pixels belong. Without this the recording would appear to
+ * zoom as the painted area grew. Measured on Photoshop 2026, a 400x300 mark on
+ * a 4000x3000 canvas asked for at 1663x1247 comes back as 167x126 with bounds
+ * 83,62 -> 250,188: the mark's own place in the output rectangle.
  *
- * `pixmapWidth / sourceWidth` is then 1 instead of 0.2445, so the frame gets
- * padded out to the full 7513x4617 with the drawing stranded in the top-left
- * corner and everything else white. Frames like that are permanent: they go
- * straight into the exported video.
- *
- * The two readings cannot be told apart from the bounds alone, so this checks
- * the only thing that separates them -- whether Photoshop had any reason to
- * downscale, and whether what came back is that exact downscale of the whole
- * canvas:
- *
- *   - a cap below the canvas's longest side, or Photoshop had nothing to do;
- *   - a pixmap that reaches the cap, which only a downscale produces;
- *   - bounds that match the canvas at that scale, origin included.
- *
- * Anything else keeps the documented reading. A pixmap covering part of the
- * canvas at scale 1 is not a case this has to decide: with nothing scaled the
- * two spaces agree, and the arithmetic above is right either way.
+ * The result always fills `outputRect` exactly, because `pixmap.bounds` always
+ * describes the returned pixels' own extent -- so the widths cancel.
  */
-export function isScaledWholeDocument(
-    docBounds: Bounds,
-    pixmapBounds: Bounds,
+export function computePadding(
+    outputRect: Bounds,
+    pixmapBounds: Bounds | null | undefined,
     pixmapWidth: number,
-    pixmapHeight: number,
-    maxDimension: number
-): boolean {
-    if (!(maxDimension > 0)) {
-        return false;
+    pixmapHeight: number
+): Padding {
+    if (!pixmapBounds || pixmapWidth <= 0 || pixmapHeight <= 0) {
+        return NO_PADDING;
     }
-    const docW = boundsWidth(docBounds);
-    const docH = boundsHeight(docBounds);
-    if (docW <= 0 || docH <= 0) {
-        return false;
+    if (pixmapExceedsOutputRect(outputRect, pixmapWidth, pixmapHeight)) {
+        return NO_PADDING;
     }
-    const longestDoc = Math.max(docW, docH);
-    if (longestDoc <= maxDimension) {
-        return false; // nothing to downscale, so both readings share a scale
-    }
-    if (Math.max(pixmapWidth, pixmapHeight) < maxDimension) {
-        return false; // never reached the cap, so it was not capped
-    }
-    const scale = maxDimension / longestDoc;
-    return (
-        within1(pixmapBounds.left, docBounds.left * scale) &&
-        within1(pixmapBounds.top, docBounds.top * scale) &&
-        within1(boundsWidth(pixmapBounds), docW * scale) &&
-        within1(boundsHeight(pixmapBounds), docH * scale)
-    );
+    return {
+        left: nonNegative(Math.round(pixmapBounds.left - outputRect.left)),
+        top: nonNegative(Math.round(pixmapBounds.top - outputRect.top)),
+        right: nonNegative(Math.round(outputRect.right - pixmapBounds.right)),
+        bottom: nonNegative(Math.round(outputRect.bottom - pixmapBounds.bottom))
+    };
 }
 
-/** Photoshop rounds to whole pixels; one pixel of slack absorbs that. */
-function within1(a: number, b: number): boolean {
-    return Math.abs(a - b) <= 1;
+/**
+ * True when Photoshop returned more pixels than the rectangle it was asked
+ * for, which means it did not honour the request.
+ *
+ * Every Photoshop this has been measured on honours `inputRect` + `outputRect`
+ * + `clipToDocumentBounds`, but only 2026 has been measured; the plug-in
+ * supports 2020 and up. A version that quietly ignored the request would hand
+ * back something at a scale of its own choosing, and seating that inside
+ * `outputRect` would strand it in a corner -- which is exactly the failure
+ * this whole file exists to have stopped happening.
+ *
+ * Padding is a nicety; it keeps the frame from appearing to zoom while the
+ * painted area grows. A frame seated against a rectangle we can see does not
+ * describe it is ruined, so the pixmap is written as it came instead.
+ */
+export function pixmapExceedsOutputRect(
+    outputRect: Bounds,
+    pixmapWidth: number,
+    pixmapHeight: number
+): boolean {
+    const width = boundsWidth(outputRect);
+    const height = boundsHeight(outputRect);
+    if (width <= 0 || height <= 0) {
+        return false;
+    }
+    return pixmapWidth > width + 1 || pixmapHeight > height + 1;
 }
 
 function nonNegative(value: number): number {

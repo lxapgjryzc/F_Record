@@ -51,7 +51,7 @@ import { Encoder, Pixmap } from "./encoder";
 import { CaptureScheduler, SchedulerStats } from "./capture";
 import { Bridge } from "./bridge";
 import { CoreLogger, Logger } from "./logger";
-import { computeMaxDimension, computePadding } from "./framing";
+import { computeOutputRect, computePadding, pixmapExceedsOutputRect } from "./framing";
 import { UpdateChecker } from "./update";
 
 declare const __PLUGIN_VERSION__: string;
@@ -140,12 +140,18 @@ class FRecordPlugin {
     /**
      * Session the capture geometry has already been logged for.
      *
-     * Which coordinate space Photoshop reports `pixmap.bounds` in decides how
-     * every frame is padded, and it is not the same across versions. One line
-     * per session makes it something the log can be read for instead of
-     * something to be worked out backwards from a broken frame.
+     * What Photoshop returns for a given pixmap request has not been the same
+     * across versions, and it decides how every frame is seated. One line per
+     * session makes it something the log can be read for instead of something
+     * to be worked out backwards from a broken frame.
      */
     private loggedGeometryFor: string | null = null;
+    /**
+     * Session the "Photoshop ignored the requested rectangle" warning was
+     * issued for. Once is enough: it is a property of the Photoshop build, so
+     * it would otherwise repeat on every single frame.
+     */
+    private warnedOversizePixmapFor: string | null = null;
 
     private resyncTimer: any = null;
     private manifestTimer: any = null;
@@ -602,14 +608,19 @@ class FRecordPlugin {
             return;
         }
 
-        const maxDimension = computeMaxDimension(bounds, config.resolution);
+        const outputRect = computeOutputRect(bounds, config.resolution);
 
-        // One pixmap call. `clipToDocumentBounds` keeps Photoshop from sending
-        // pixels that lie outside the canvas, which means the frame only ever
-        // needs padding to reach full canvas size and never cropping.
+        // One pixmap call, and all three settings matter. `inputRect` names the
+        // canvas, `outputRect` names the size to render it at, and only with
+        // both does `clipToDocumentBounds` actually clip. Sending
+        // `maxDimension` instead -- what this did up to 4.2.1 -- gets back the
+        // union of the layers at a scale Photoshop does not report, which is
+        // how a whole session came out padded to 8000px of mostly white. See
+        // `computeOutputRect` for the measurements.
         const pixmap: Pixmap & { bounds?: Bounds } = await this.generator.getDocumentPixmap(documentId, {
-            clipToDocumentBounds: true,
-            maxDimension: maxDimension
+            inputRect: bounds,
+            outputRect: outputRect,
+            clipToDocumentBounds: true
         });
 
         if (!pixmap || !pixmap.pixels || pixmap.width <= 0 || pixmap.height <= 0) {
@@ -636,13 +647,26 @@ class FRecordPlugin {
         if (this.loggedGeometryFor !== session.sessionId) {
             this.loggedGeometryFor = session.sessionId;
             this.log.info(
-                "Capture geometry: canvas " + describeBounds(bounds) + ", asked for max " + maxDimension +
-                    ", got " + pixmap.width + "x" + pixmap.height + " with bounds " +
-                    describeBounds(pixmap.bounds)
+                "Capture geometry: canvas " + describeBounds(bounds) + ", asked for " +
+                    describeBounds(outputRect) + ", got " + pixmap.width + "x" + pixmap.height +
+                    " with bounds " + describeBounds(pixmap.bounds)
             );
         }
 
-        const padding = computePadding(bounds, pixmap.bounds, pixmap.width, pixmap.height, maxDimension);
+        if (
+            this.warnedOversizePixmapFor !== session.sessionId &&
+            pixmapExceedsOutputRect(outputRect, pixmap.width, pixmap.height)
+        ) {
+            this.warnedOversizePixmapFor = session.sessionId;
+            this.log.warn(
+                "Photoshop returned " + pixmap.width + "x" + pixmap.height + " for a requested " +
+                    describeBounds(outputRect) + " -- larger than what was asked for, so this " +
+                    "Photoshop is not honouring inputRect/outputRect. Frames are written " +
+                    "unpadded rather than seated against a rectangle that does not describe them."
+            );
+        }
+
+        const padding = computePadding(outputRect, pixmap.bounds, pixmap.width, pixmap.height);
         const at = Date.now();
         const seq = session.manifest.nextSeq;
         const target = path.join(session.folder, frameFileName(seq, at, config.format));
