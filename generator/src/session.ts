@@ -207,6 +207,15 @@ export class SessionResolver {
             return false;
         }
         const stored = await this.readStoredSessionId(documentId);
+        // The read can take a long time -- Photoshop answers scripts only once
+        // a save is fully written -- and a Save As forks the document onto a
+        // new session in the meantime. Writing `known` now would put the old
+        // id back over the fork's, and every frame from then on would land in
+        // the folder the file was saved away from. Whoever re-mapped the
+        // document has stamped it already.
+        if (this.docToSession[documentId] !== known) {
+            return false;
+        }
         if (stored === known) {
             return false;
         }
@@ -289,6 +298,7 @@ export class SessionResolver {
         }
 
         if (sessionId && needsStamp) {
+            this.docToSession[doc.id] = sessionId;
             restamped = await this.stamp(doc.id, sessionId);
         }
 
@@ -304,6 +314,7 @@ export class SessionResolver {
             const folder = sessionFolder(config.processImageFolderPath, sessionId);
             mkdirp(folder);
             writeManifest(folder, createManifest(sessionId, docName, filePath, doc.bounds, config));
+            this.docToSession[doc.id] = sessionId;
             await this.stamp(doc.id, sessionId);
             this.log("info", "Started session " + sessionId + " for '" + docName + "'");
             return {
@@ -329,6 +340,7 @@ export class SessionResolver {
         }
         const filePath = documentFilePath(doc.file);
         const docName = documentDisplayName(doc.file);
+        this.docToSession[doc.id] = sessionId;
         const restamped = await this.stamp(doc.id, sessionId);
         this.log("info", "Adopted session " + sessionId + " for document " + doc.id);
         return this.finish(doc, config, sessionId, docName, filePath, canvasSize(doc.bounds), false, restamped);
@@ -377,6 +389,10 @@ export class SessionResolver {
         // The document has moved to the copy. The session it came from keeps
         // its own file paths, so reopening the file left behind still finds it.
         this.index.detachDocument(from.sessionId, doc.id);
+        // Claimed before the stamp is awaited, so a repair that was already
+        // reading the PSD when the fork began sees the new owner and stands
+        // down instead of writing the old id back on top; see repairAfterSave.
+        this.docToSession[doc.id] = sessionId;
         await this.stamp(doc.id, sessionId);
 
         this.log(
@@ -395,6 +411,7 @@ export class SessionResolver {
         const folder = sessionFolder(config.processImageFolderPath, sessionId);
         mkdirp(folder);
         writeManifest(folder, createManifest(sessionId, docName, filePath, doc.bounds, config));
+        this.docToSession[doc.id] = sessionId;
         await this.stamp(doc.id, sessionId);
         this.log("info", "Started fresh session " + sessionId + " for document " + doc.id);
         return this.finish(doc, config, sessionId, docName, filePath, canvasSize(doc.bounds), true, false);

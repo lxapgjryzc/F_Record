@@ -206,6 +206,40 @@ test("auto-pauses loudly after repeated failures instead of failing quietly", as
     assert.ok(h.calls.length > before, "resume actually resumes");
 });
 
+test("a pause it imposed itself is told apart from one that was asked for", async () => {
+    const h = makeScheduler();
+    h.scheduler.setEnabled(true);
+
+    for (let i = 0; i < 5; i++) {
+        h.scheduler.notifyChange();
+        await h.clock.advance(20000);
+        await h.finish(new Error("capture timed out"));
+    }
+    assert.equal(h.scheduler.isAutoPaused(), true, "five failures: the scheduler paused itself");
+
+    // The plug-in may lift that once the cause has cleared. Doing so must not
+    // touch a pause somebody asked for, which is why the two are distinct.
+    h.scheduler.resume();
+    assert.equal(h.scheduler.isAutoPaused(), false);
+    assert.equal(h.scheduler.isPaused(), false);
+
+    h.scheduler.pause("Exporting");
+    assert.equal(h.scheduler.isPaused(), true);
+    assert.equal(h.scheduler.isAutoPaused(), false, "an export's pause is not the scheduler's own");
+
+    // Re-enabling starts clean, as before.
+    h.scheduler.resume();
+    for (let i = 0; i < 5; i++) {
+        h.scheduler.notifyChange();
+        await h.clock.advance(20000);
+        await h.finish(new Error("capture timed out"));
+    }
+    assert.equal(h.scheduler.isAutoPaused(), true);
+    h.scheduler.setEnabled(false);
+    h.scheduler.setEnabled(true);
+    assert.equal(h.scheduler.isAutoPaused(), false);
+});
+
 test("a synchronous throw from capture is handled like a rejection", async () => {
     const clock = makeClock();
     let calls = 0;

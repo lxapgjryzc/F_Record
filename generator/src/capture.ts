@@ -85,6 +85,14 @@ export class CaptureScheduler {
 
     private enabled = false;
     private pausedReason: string | null = null;
+    /**
+     * True when the pause was this scheduler's own doing, after repeated
+     * failures, rather than asked for by the user or by an export. The
+     * distinction is what lets the plug-in lift a pause once the failures'
+     * cause -- Photoshop not answering -- has visibly cleared, while leaving
+     * a pause somebody asked for exactly where they put it.
+     */
+    private autoPaused = false;
     private inFlight = false;
     private pendingChange = false;
     private timer: any = null;
@@ -134,6 +142,7 @@ export class CaptureScheduler {
         } else {
             // A fresh start clears a previous auto-pause and its failure count.
             this.pausedReason = null;
+            this.autoPaused = false;
             this.consecutiveFailures = 0;
             this.nextIntervalMs = this.minIntervalMs;
         }
@@ -146,6 +155,7 @@ export class CaptureScheduler {
 
     pause(reason: string): void {
         this.pausedReason = reason;
+        this.autoPaused = false;
         this.cancelTimer();
         this.emitStats();
     }
@@ -155,6 +165,7 @@ export class CaptureScheduler {
             return;
         }
         this.pausedReason = null;
+        this.autoPaused = false;
         this.consecutiveFailures = 0;
         this.nextIntervalMs = this.minIntervalMs;
         this.emitStats();
@@ -165,6 +176,11 @@ export class CaptureScheduler {
 
     isPaused(): boolean {
         return this.pausedReason !== null;
+    }
+
+    /** Paused by the failure threshold, not by anyone's request. */
+    isAutoPaused(): boolean {
+        return this.pausedReason !== null && this.autoPaused;
     }
 
     /**
@@ -284,6 +300,7 @@ export class CaptureScheduler {
                         "Recording paused after " + this.consecutiveFailures +
                         " consecutive capture failures. Last error: " + error.message;
                     this.pausedReason = reason;
+                    this.autoPaused = true;
                     this.log("error", reason);
                     this.onAutoPause(reason);
                 }

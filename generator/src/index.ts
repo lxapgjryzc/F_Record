@@ -63,6 +63,25 @@ const MANIFEST_FLUSH_MS = 2000;
 const TICK_MS = 1000;
 /** Heartbeat resync, purely as a safety net if an event is ever missed. */
 const HEARTBEAT_TICKS = 5;
+/**
+ * How long a document-info request may go unanswered before it is given up on.
+ *
+ * Photoshop answers scripts only when it is free. Saving a 150 MB PSD to a
+ * synced drive keeps it busy for tens of seconds, and on one occasion it then
+ * went on not answering for 89 minutes -- from that save until the next one --
+ * while still delivering imageChanged events. Events said the file had been
+ * renamed and the canvas resized; the sync that would have acted on them was
+ * waiting on a request Photoshop was sitting on, so nothing was recorded and
+ * nothing was logged. A request that has gone longer than this is treated as
+ * lost: it is reported, a fresh one is sent, and the old answer, should it
+ * turn up, is discarded. A minute is comfortably past an honest big save.
+ */
+const SYNC_STALL_MS = 60000;
+
+/** Knobs generator-core can pass from a per-plugin config file; only tests set them. */
+interface PluginOptions {
+    syncStallMs?: number;
+}
 
 /**
  * Everything below is switched off. `imageInfo` alone gives us bounds, file
@@ -157,9 +176,59 @@ class FRecordPlugin {
     private manifestTimer: any = null;
     private tickTimer: any = null;
     private tickCount = 0;
-    private resyncInFlight = false;
 
-    constructor(private readonly generator: GeneratorApi, coreLogger: CoreLogger | null) {
+    /**
+     * Serial of the document sync currently in flight, 0 when there is none.
+     *
+     * Only the sync holding this serial may apply what Photoshop answers.
+     * A sync that has been superseded -- because Photoshop sat on its request
+     * past `syncStallMs` and a fresh one was sent -- finds a different serial
+     * here when its answer finally arrives, and drops it. That keeps exactly
+     * one sync applying state at a time without the one in flight being able
+     * to hold everything up indefinitely.
+     */
+    private syncInFlight = 0;
+    private syncSerial = 0;
+    private syncStartedAt = 0;
+    /** True while the sync in flight is waiting on Photoshop, as opposed to forking or resolving. */
+    private syncAwaitingInfo = false;
+    private warnedStalledSync = false;
+    /**
+     * When the current run of unanswered requests began, 0 while Photoshop is
+     * answering. Photoshop has been seen to stop answering scripts for 89
+     * minutes at a stretch -- from one save of a 150 MB document to the next
+     * -- while still delivering events. One warning when that starts and one
+     * line when it ends is what the log needs; a line every 30 seconds in
+     * between is not.
+     */
+    private stalledSince = 0;
+    /**
+     * A resync was asked for while one was already in flight.
+     *
+     * Photoshop answers document-info requests in order and only when it is
+     * free, so a request sent just before a large Save As is answered once the
+     * file is on disk -- tens of seconds later on a slow drive. Everything the
+     * user does meanwhile (the Save As itself, a Canvas Size, the first strokes
+     * on the renamed document) arrives as events during that wait. Each used
+     * to ask for a resync that was thrown away because one was already
+     * running, leaving `docBounds` and its generation behind the canvas: every
+     * capture then refused the frame, silently, until the heartbeat happened
+     * to come round. Remembering the request and running it as soon as the
+     * one in flight returns is what makes the copy start recording at once.
+     */
+    private resyncRequested = false;
+    private readonly syncStallMs: number;
+    private stampFlushInFlight = false;
+    /** Session an empty pixmap has already been noted for; once is enough. */
+    private loggedEmptyPixmapFor: string | null = null;
+
+    constructor(
+        private readonly generator: GeneratorApi,
+        coreLogger: CoreLogger | null,
+        options: PluginOptions = {}
+    ) {
+        this.syncStallMs =
+            typeof options.syncStallMs === "number" && options.syncStallMs > 0 ? options.syncStallMs : SYNC_STALL_MS;
         this.log = new Logger(coreLogger);
         this.configStore = new ConfigStore();
         this.index = new SessionIndex(randomHex(8));
@@ -249,16 +318,11 @@ class FRecordPlugin {
             this.bridge.broadcast({ type: "log", level: level, message: message, at: Date.now() });
         });
 
-        if (this.generator.getPhotoshopVersion) {
-            try {
-                this.photoshopVersion = String(await this.generator.getPhotoshopVersion());
-            } catch (e) {
-                this.photoshopVersion = null;
-            }
-        }
-
+        // Events and the heartbeat come first, ahead of anything that waits on
+        // Photoshop. The version query and the menu install are cosmetic, and
+        // Photoshop can be slow to answer either; recording must not sit
+        // behind them.
         this.subscribeToPhotoshop();
-        await this.installMenu();
 
         const config = this.configStore.get();
         if (config.autoStart && !config.enabled) {
@@ -270,6 +334,15 @@ class FRecordPlugin {
         if (this.tickTimer.unref) {
             this.tickTimer.unref();
         }
+
+        if (this.generator.getPhotoshopVersion) {
+            try {
+                this.photoshopVersion = String(await this.generator.getPhotoshopVersion());
+            } catch (e) {
+                this.photoshopVersion = null;
+            }
+        }
+        await this.installMenu();
 
         await this.syncActiveDocument();
         this.log.info("F_Record ready");
@@ -446,69 +519,156 @@ class FRecordPlugin {
     }
 
     private async syncActiveDocument(): Promise<void> {
-        if (this.resyncInFlight) {
+        if (this.syncInFlight !== 0) {
+            const waited = Date.now() - this.syncStartedAt;
+            if (waited < this.syncStallMs) {
+                // Run again once the one in flight is done; see resyncRequested.
+                this.resyncRequested = true;
+                return;
+            }
+            if (!this.syncAwaitingInfo) {
+                // Forking or resolving, which is our own work and must not be
+                // run twice over. It is waiting on Photoshop too -- a stamp,
+                // a settings read -- so say so once, where the panel shows
+                // it, and queue behind it.
+                if (!this.warnedStalledSync) {
+                    this.warnedStalledSync = true;
+                    this.log.error(
+                        "A document sync has been waiting on Photoshop for " + Math.round(waited / 1000) +
+                            "s; nothing is recorded until it finishes"
+                    );
+                }
+                this.resyncRequested = true;
+                return;
+            }
+            // Photoshop has sat on the request. Send a fresh one and let the
+            // old answer, if it ever comes, fall on the floor: whatever it
+            // would have said, the new answer says too, and more recently.
+            if (this.stalledSince === 0) {
+                this.stalledSince = this.syncStartedAt;
+                // An error, not a warning: the panel only surfaces errors, and
+                // "nothing is being recorded" is what the user has to know.
+                this.log.error(
+                    "Photoshop has not answered a document-info request for " + Math.round(waited / 1000) +
+                        "s; asking again. Nothing is recorded until it answers"
+                );
+            }
+        }
+
+        for (;;) {
+            this.resyncRequested = false;
+            const serial = ++this.syncSerial;
+            this.syncInFlight = serial;
+            this.syncStartedAt = Date.now();
+            this.warnedStalledSync = false;
+            try {
+                await this.syncActiveDocumentOnce(serial);
+            } finally {
+                if (this.syncInFlight === serial) {
+                    this.syncInFlight = 0;
+                    this.syncAwaitingInfo = false;
+                }
+            }
+            // A newer sync has taken over, or nothing was asked for meanwhile.
+            if (this.syncInFlight !== 0 || !this.resyncRequested) {
+                return;
+            }
+        }
+    }
+
+    /** Closes a run of unanswered requests, if one was open. */
+    private noteAnswered(): void {
+        if (this.stalledSince === 0) {
             return;
         }
-        this.resyncInFlight = true;
-        try {
-            let info: any;
-            // Read before the call, not after: anything Photoshop reports while
-            // this is in flight is newer than what comes back, and marking it
-            // as synced would hide a resize we have not actually seen yet.
-            const generation = this.boundsGeneration;
-            try {
-                info = await this.generator.getDocumentInfo(
-                    this.activeDocumentId === null ? undefined : this.activeDocumentId,
-                    CHEAP_DOC_FLAGS
-                );
-            } catch (e) {
-                // "No Open Document", or the document we were tracking is gone.
-                if (this.activeDocumentId !== null || this.current !== null) {
-                    this.clearActiveDocument();
-                }
-                return;
-            }
-            if (!info || typeof info.id !== "number") {
-                this.clearActiveDocument();
-                return;
-            }
-
-            const config = this.configStore.get();
-            const wasDocumentId = this.activeDocumentId;
-            const wasFile = this.docFile;
-            if (info.id !== this.activeDocumentId) {
-                this.activeDocumentId = info.id;
-                this.needsResolve = true;
-            }
-            this.docBounds = info.bounds || null;
-            this.syncedBoundsGeneration = generation;
-            this.docFile = typeof info.file === "string" ? info.file : "";
-            this.docPpi = typeof info.resolution === "number" ? info.resolution : undefined;
-
-            const size = canvasSize(this.docBounds);
-            this.docTooSmall = size.width * size.height < config.minCanvasPixels;
-
-            // The same document arriving under a different name, with the old
-            // file still on disk, is a Save As -- and a Save As means there are
-            // now two artworks where there was one.
-            const forked =
-                info.id === wasDocumentId &&
-                this.current !== null &&
-                this.resolvedForDocId === info.id &&
-                isSaveAsRename(wasFile, this.docFile)
-                    ? await this.forkForSaveAs(config)
-                    : false;
-
-            if (!forked && (this.needsResolve || this.resolvedForDocId !== info.id || this.current === null)) {
-                await this.resolveSession(config);
-            }
-
-            this.scheduler.setMinInterval(config.minIntervalMs);
-            this.scheduler.setEnabled(config.enabled && this.current !== null && !this.docTooSmall);
+        this.log.info(
+            "Photoshop is answering again after " + Math.round((Date.now() - this.stalledSince) / 1000) +
+                "s; recording resumes"
+        );
+        this.stalledSince = 0;
+        // Captures sent into the same silence timed out, and enough of those
+        // pause recording. That pause was Photoshop's doing, so lift it here
+        // rather than leave the panel asking for a resume click over a fault
+        // that has already cleared. A pause the user or an export asked for
+        // is left exactly where they put it.
+        if (this.scheduler.isAutoPaused()) {
+            this.log.info("Lifting the pause that the unanswered captures caused");
+            this.scheduler.resume();
             this.broadcastState();
-        } finally {
-            this.resyncInFlight = false;
         }
+    }
+
+    /** One round trip to Photoshop and everything that follows from its answer. */
+    private async syncActiveDocumentOnce(serial: number): Promise<void> {
+        let info: any;
+        // Read before the call, not after: anything Photoshop reports while
+        // this is in flight is newer than what comes back, and marking it
+        // as synced would hide a resize we have not actually seen yet.
+        const generation = this.boundsGeneration;
+        this.syncAwaitingInfo = true;
+        try {
+            info = await this.generator.getDocumentInfo(
+                this.activeDocumentId === null ? undefined : this.activeDocumentId,
+                CHEAP_DOC_FLAGS
+            );
+        } catch (e) {
+            if (this.syncInFlight !== serial) {
+                return;
+            }
+            this.syncAwaitingInfo = false;
+            this.noteAnswered();
+            // "No Open Document", or the document we were tracking is gone.
+            if (this.activeDocumentId !== null || this.current !== null) {
+                this.log.info("Photoshop has no document to record (" + errText(e) + "); detaching");
+                this.clearActiveDocument();
+            }
+            return;
+        }
+        if (this.syncInFlight !== serial) {
+            // Given up on while it waited; a newer sync owns the state now.
+            return;
+        }
+        this.syncAwaitingInfo = false;
+        this.noteAnswered();
+        if (!info || typeof info.id !== "number") {
+            this.log.warn("Photoshop answered a document-info request without a document id; detaching");
+            this.clearActiveDocument();
+            return;
+        }
+
+        const config = this.configStore.get();
+        const wasDocumentId = this.activeDocumentId;
+        const wasFile = this.docFile;
+        if (info.id !== this.activeDocumentId) {
+            this.activeDocumentId = info.id;
+            this.needsResolve = true;
+        }
+        this.docBounds = info.bounds || null;
+        this.syncedBoundsGeneration = generation;
+        this.docFile = typeof info.file === "string" ? info.file : "";
+        this.docPpi = typeof info.resolution === "number" ? info.resolution : undefined;
+
+        const size = canvasSize(this.docBounds);
+        this.docTooSmall = size.width * size.height < config.minCanvasPixels;
+
+        // The same document arriving under a different name, with the old
+        // file still on disk, is a Save As -- and a Save As means there are
+        // now two artworks where there was one.
+        const forked =
+            info.id === wasDocumentId &&
+            this.current !== null &&
+            this.resolvedForDocId === info.id &&
+            isSaveAsRename(wasFile, this.docFile)
+                ? await this.forkForSaveAs(config)
+                : false;
+
+        if (!forked && (this.needsResolve || this.resolvedForDocId !== info.id || this.current === null)) {
+            await this.resolveSession(config);
+        }
+
+        this.scheduler.setMinInterval(config.minIntervalMs);
+        this.scheduler.setEnabled(config.enabled && this.current !== null && !this.docTooSmall);
+        this.broadcastState();
     }
 
     /**
@@ -558,6 +718,12 @@ class FRecordPlugin {
         if (this.activeDocumentId === null) {
             return;
         }
+        // The resolver rebuilds the manifest from disk. Write the live one
+        // first, or resolving straight back to the session already being
+        // recorded -- a plain save does exactly that -- would hand back
+        // counters up to two seconds stale, and the frame that landed in
+        // between would lose its timestamp from lastModifiedAt.
+        this.flushManifest();
         const doc: DocInfo = {
             id: this.activeDocumentId,
             file: this.docFile,
@@ -600,10 +766,13 @@ class FRecordPlugin {
 
         // Photoshop has reported a resize the debounced resync has not read
         // yet, so `bounds` describes a canvas that no longer exists. Capturing
-        // now would pad the frame to the old size. Wait for the resync and let
-        // it come round again; the pending change is re-armed below.
+        // now would pad the frame to the old size. Ask for the resync outright
+        // rather than assume one is coming -- the one the resize scheduled may
+        // have been folded into a sync that was already in flight -- and let
+        // the change come round again; it is re-armed below.
         const generation = this.boundsGeneration;
         if (this.syncedBoundsGeneration !== generation) {
+            this.scheduleResync();
             this.scheduler.notifyChange();
             return;
         }
@@ -624,7 +793,13 @@ class FRecordPlugin {
         });
 
         if (!pixmap || !pixmap.pixels || pixmap.width <= 0 || pixmap.height <= 0) {
-            // An empty canvas has nothing to record; not an error.
+            // An empty canvas has nothing to record; not an error. Noted once
+            // per session all the same, so a document that never yields
+            // pixels can be told apart from one that is never asked.
+            if (this.loggedEmptyPixmapFor !== session.sessionId) {
+                this.loggedEmptyPixmapFor = session.sessionId;
+                this.log.info("Photoshop returned an empty pixmap for " + session.sessionId + "; nothing to record yet");
+            }
             return;
         }
         // Recording may have been switched off while Photoshop was rendering.
@@ -731,10 +906,16 @@ class FRecordPlugin {
             }
 
             // Retries any session id that could not be written because its
-            // document was not frontmost at the time.
-            this.resolver.flushPendingStamps().catch(() => {
-                /* logged inside the resolver */
-            });
+            // document was not frontmost at the time. One at a time: a write
+            // Photoshop is sitting on must not be joined by another every
+            // second, to be executed as a batch when it finally wakes up.
+            if (!this.stampFlushInFlight) {
+                this.stampFlushInFlight = true;
+                const done = () => {
+                    this.stampFlushInFlight = false;
+                };
+                this.resolver.flushPendingStamps().then(done, done);
+            }
 
             if (this.tickCount % HEARTBEAT_TICKS === 0) {
                 if (this.bridge.hasClients()) {
@@ -1058,12 +1239,13 @@ function errText(e: unknown): string {
  */
 export function init(
     generator: GeneratorApi,
-    _config: unknown,
+    config: unknown,
     logger?: CoreLogger
 ): { ready: Promise<void>; stop: () => Promise<void> } | undefined {
     let plugin: FRecordPlugin;
     try {
-        plugin = new FRecordPlugin(generator, logger || null);
+        const options: PluginOptions = config && typeof config === "object" ? (config as PluginOptions) : {};
+        plugin = new FRecordPlugin(generator, logger || null, options);
     } catch (e) {
         if (logger && logger.error) {
             logger.error("F_Record failed to initialise: " + errText(e));

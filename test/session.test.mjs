@@ -524,6 +524,49 @@ test("Save As gives the renamed document its own copy of the frames so far", asy
     );
 });
 
+test("a repair still reading the PSD when the fork happens does not put the old id back", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    s.ps.setActive(1);
+    const original = await s.resolver.resolve(
+        { id: 1, file: "C:" + SEP + "art" + SEP + "a.psd", bounds: BOUNDS },
+        s.config,
+        true
+    );
+    writeFrames(s.config, original.session.sessionId, 3);
+
+    // Save As: the settings go, and the save event starts a repair. Its read
+    // of the PSD is answered only after the save is fully written, which for
+    // a large file on a slow drive is long after the fork has run.
+    s.ps.wipeSettings(1);
+    let answerRead;
+    const readAnswered = new Promise((resolve) => (answerRead = resolve));
+    const gateway = s.ps.gateway;
+    const read = gateway.getDocumentSettings.bind(gateway);
+    gateway.getDocumentSettings = async (id) => {
+        await readAnswered;
+        return read(id);
+    };
+    const repair = s.resolver.repairAfterSave(1);
+
+    const forked = await s.resolver.forkForSaveAs(
+        { id: 1, file: "C:" + SEP + "art" + SEP + "b.psd", bounds: BOUNDS },
+        s.config,
+        original.session
+    );
+    assert.equal(s.ps.peek(1).sessionId, forked.sessionId, "precondition: the fork stamped the document");
+
+    // Photoshop finally answers the read: nothing there. The repair's remedy
+    // for that would be to write back the id it knew before the fork -- the
+    // original's -- which would send every frame from here on into the
+    // folder the file was saved away from.
+    answerRead();
+    assert.equal(await repair, false, "the repair stands down");
+    assert.equal(s.ps.peek(1).sessionId, forked.sessionId, "the document keeps the copy's id");
+    assert.ok(!s.logs.some((l) => /restamping/.test(l)), "and nothing claims to have repaired it");
+});
+
 test("the two halves are independent: a frame added to one does not reach the other", async (t) => {
     const s = setup();
     t.after(() => s.temp.cleanup());
