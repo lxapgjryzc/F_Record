@@ -598,25 +598,35 @@ class FRecordPlugin {
         }
     }
 
-    /** One round trip to Photoshop and everything that follows from its answer. */
+    /**
+     * One round trip to Photoshop and everything that follows from its answer.
+     *
+     * The sync is bound to the document it set out to ask about. Every await
+     * in here is a window in which the user can move to another document --
+     * File > New straight after a save does exactly that, since Photoshop
+     * answers nothing until the file is on disk -- and what comes back then
+     * describes the document they just left. See leftBehind for what that
+     * used to do.
+     */
     private async syncActiveDocumentOnce(serial: number): Promise<void> {
         let info: any;
         // Read before the call, not after: anything Photoshop reports while
         // this is in flight is newer than what comes back, and marking it
         // as synced would hide a resize we have not actually seen yet.
         const generation = this.boundsGeneration;
+        const askedFor = this.activeDocumentId;
         this.syncAwaitingInfo = true;
         try {
-            info = await this.generator.getDocumentInfo(
-                this.activeDocumentId === null ? undefined : this.activeDocumentId,
-                CHEAP_DOC_FLAGS
-            );
+            info = await this.generator.getDocumentInfo(askedFor === null ? undefined : askedFor, CHEAP_DOC_FLAGS);
         } catch (e) {
             if (this.syncInFlight !== serial) {
                 return;
             }
             this.syncAwaitingInfo = false;
             this.noteAnswered();
+            if (this.leftBehind(askedFor)) {
+                return;
+            }
             // "No Open Document", or the document we were tracking is gone.
             if (this.activeDocumentId !== null || this.current !== null) {
                 this.log.info("Photoshop has no document to record (" + errText(e) + "); detaching");
@@ -630,6 +640,9 @@ class FRecordPlugin {
         }
         this.syncAwaitingInfo = false;
         this.noteAnswered();
+        if (this.leftBehind(askedFor)) {
+            return;
+        }
         if (!info || typeof info.id !== "number") {
             this.log.warn("Photoshop answered a document-info request without a document id; detaching");
             this.clearActiveDocument();
@@ -661,14 +674,85 @@ class FRecordPlugin {
             isSaveAsRename(wasFile, this.docFile)
                 ? await this.forkForSaveAs(config)
                 : false;
+        if (this.leftBehind(askedFor)) {
+            return;
+        }
 
         if (!forked && (this.needsResolve || this.resolvedForDocId !== info.id || this.current === null)) {
             await this.resolveSession(config);
+            if (this.leftBehind(askedFor)) {
+                return;
+            }
         }
 
         this.scheduler.setMinInterval(config.minIntervalMs);
         this.scheduler.setEnabled(config.enabled && this.current !== null && !this.docTooSmall);
         this.broadcastState();
+    }
+
+    /**
+     * True when the frontmost document is no longer the one a sync set out
+     * for, in which case the sync must not apply what it has and another is
+     * asked for instead.
+     *
+     * Before this check existed, the answer for the document just left was
+     * applied as if it were current. `activeDocumentId` was pointed back at
+     * that document, and from then on every stroke on the new one was
+     * ignored -- not until the next heartbeat, but for good: the heartbeat
+     * asks about the document it believes is frontmost, which is precisely
+     * the belief that had been overwritten. Save, then File > New, and the
+     * new drawing was never recorded. The same race past the answer, while
+     * the session was being resolved, marked the new document as resolved to
+     * the old document's session and recorded the new drawing into the old
+     * folder.
+     *
+     * Whatever the sync did resolve is left where it is. The resolver's map
+     * and the index remember it for the document it was for, so returning
+     * to that document finds it again; the sync that follows sets `current`
+     * for the document actually in front. The scheduler is left as the
+     * document change left it, which is off.
+     */
+    private leftBehind(askedFor: number | null): boolean {
+        if (this.activeDocumentId === askedFor) {
+            return false;
+        }
+        this.log.info(
+            "The frontmost document changed from " + describeDocumentId(askedFor) + " to " +
+                describeDocumentId(this.activeDocumentId) + " while it was being synced; syncing the new one"
+        );
+        this.resyncRequested = true;
+        return true;
+    }
+
+    /**
+     * Makes `session` the one being recorded, provided `documentId` is still
+     * the document in front.
+     *
+     * Every way of producing a session awaits Photoshop -- a settings read,
+     * a stamp -- and the user can move to another document in the meantime.
+     * The session then belongs to the document they left. The resolver has
+     * already mapped and stamped it there, so going back to that document
+     * finds it; installing it here would record whatever is in front now
+     * into it. A sync is asked for instead, which resolves the document
+     * actually in front.
+     */
+    private installSession(documentId: number, session: ResolvedSession, lastFrameAt: number | null): boolean {
+        if (this.activeDocumentId !== documentId) {
+            this.log.info(
+                "The frontmost document changed from " + describeDocumentId(documentId) + " to " +
+                    describeDocumentId(this.activeDocumentId) + " while session " + session.sessionId +
+                    " was being prepared for it; syncing the new one"
+            );
+            this.needsResolve = true;
+            this.scheduleResync();
+            return false;
+        }
+        this.current = session;
+        this.resumeCandidates = [];
+        this.resolvedForDocId = documentId;
+        this.needsResolve = false;
+        this.lastFrameAt = lastFrameAt;
+        return true;
     }
 
     /**
@@ -715,7 +799,8 @@ class FRecordPlugin {
     }
 
     private async resolveSession(config: Config): Promise<void> {
-        if (this.activeDocumentId === null) {
+        const documentId = this.activeDocumentId;
+        if (documentId === null) {
             return;
         }
         // The resolver rebuilds the manifest from disk. Write the live one
@@ -725,7 +810,7 @@ class FRecordPlugin {
         // between would lose its timestamp from lastModifiedAt.
         this.flushManifest();
         const doc: DocInfo = {
-            id: this.activeDocumentId,
+            id: documentId,
             file: this.docFile,
             bounds: this.docBounds
         };
@@ -736,7 +821,10 @@ class FRecordPlugin {
 
         this.current = outcome.session;
         this.resumeCandidates = outcome.candidates;
-        this.resolvedForDocId = this.activeDocumentId;
+        // The document this was resolved for -- not whichever is frontmost
+        // by now. Recording it as the latter is what let a session end up
+        // marked as resolved for a document it had never seen.
+        this.resolvedForDocId = documentId;
         this.needsResolve = false;
 
         if (outcome.session) {
@@ -1092,9 +1180,11 @@ class FRecordPlugin {
             this.resolver.forgetDocument(documentId);
             if (config.enabled && !this.docTooSmall) {
                 const doc: DocInfo = { id: documentId, file: this.docFile, bounds: this.docBounds };
-                this.current = await this.resolver.startFresh(doc, config);
-                this.resolvedForDocId = documentId;
-                this.needsResolve = false;
+                const fresh = await this.resolver.startFresh(doc, config);
+                // Left uninstalled if the user has moved to another document
+                // meanwhile; `current` then stays null and the tail below
+                // asks for the sync that will resolve the document in front.
+                this.installSession(documentId, fresh, null);
             }
         }
 
@@ -1148,32 +1238,32 @@ class FRecordPlugin {
             }
 
             case "adoptSession": {
-                if (this.activeDocumentId === null) {
+                const documentId = this.activeDocumentId;
+                if (documentId === null) {
                     return { ok: false, error: "No open document" };
                 }
                 this.flushManifest();
-                const doc: DocInfo = { id: this.activeDocumentId, file: this.docFile, bounds: this.docBounds };
-                this.current = await this.resolver.adopt(doc, config, command.sessionId);
-                this.resumeCandidates = [];
-                this.resolvedForDocId = this.activeDocumentId;
-                this.needsResolve = false;
-                this.lastFrameAt = this.current.manifest.lastModifiedAt || null;
+                const doc: DocInfo = { id: documentId, file: this.docFile, bounds: this.docBounds };
+                const adopted = await this.resolver.adopt(doc, config, command.sessionId);
+                if (!this.installSession(documentId, adopted, adopted.manifest.lastModifiedAt || null)) {
+                    return { ok: true, state: this.buildState() };
+                }
                 this.scheduler.setEnabled(config.enabled && !this.docTooSmall);
                 this.broadcastState();
                 return { ok: true, state: this.buildState() };
             }
 
             case "newSession": {
-                if (this.activeDocumentId === null) {
+                const documentId = this.activeDocumentId;
+                if (documentId === null) {
                     return { ok: false, error: "No open document" };
                 }
                 this.flushManifest();
-                const doc: DocInfo = { id: this.activeDocumentId, file: this.docFile, bounds: this.docBounds };
-                this.current = await this.resolver.startFresh(doc, config);
-                this.resumeCandidates = [];
-                this.resolvedForDocId = this.activeDocumentId;
-                this.needsResolve = false;
-                this.lastFrameAt = null;
+                const doc: DocInfo = { id: documentId, file: this.docFile, bounds: this.docBounds };
+                const fresh = await this.resolver.startFresh(doc, config);
+                if (!this.installSession(documentId, fresh, null)) {
+                    return { ok: true, state: this.buildState() };
+                }
                 this.scheduler.setEnabled(config.enabled && !this.docTooSmall);
                 this.broadcastState();
                 return { ok: true, state: this.buildState() };
@@ -1199,6 +1289,10 @@ class FRecordPlugin {
                 return { ok: false, error: "Unknown command" };
         }
     }
+}
+
+function describeDocumentId(id: number | null): string {
+    return id === null ? "no document" : "document " + id;
 }
 
 function describeBounds(b: Bounds | null | undefined): string {

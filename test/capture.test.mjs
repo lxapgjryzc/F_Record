@@ -278,6 +278,22 @@ test("disabling clears queued work and re-enabling starts clean", async () => {
     assert.equal(h.scheduler.getStats().nextIntervalMs, 1000, "backoff is reset");
 });
 
+test("a change reported while disabled is captured as soon as it is enabled", async () => {
+    // Switching documents disables the scheduler until the new document is
+    // synced. A stroke landing in that window is the new document's first,
+    // and it must not have to wait for a second stroke to be recorded.
+    const h = makeScheduler();
+    h.scheduler.setEnabled(true);
+    h.scheduler.setEnabled(false);
+    h.scheduler.notifyChange();
+    await h.clock.advance(60000);
+    assert.equal(h.calls.length, 0, "nothing is captured while disabled");
+
+    h.scheduler.setEnabled(true);
+    await h.clock.advance(0);
+    assert.equal(h.calls.length, 1, "the stroke that landed meanwhile is captured on enabling");
+});
+
 test("discardPending drops work belonging to a document we just left", async () => {
     const h = makeScheduler();
     h.scheduler.setEnabled(true);

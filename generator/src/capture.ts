@@ -145,6 +145,13 @@ export class CaptureScheduler {
             this.autoPaused = false;
             this.consecutiveFailures = 0;
             this.nextIntervalMs = this.minIntervalMs;
+            // Disabling dropped whatever was queued, so a change reported
+            // since belongs to now: the first stroke on a document that was
+            // still being synced when it landed. Take it, as resume does,
+            // rather than wait for the stroke after it.
+            if (this.pendingChange) {
+                this.schedule();
+            }
         }
         this.emitStats();
     }
