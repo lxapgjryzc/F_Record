@@ -41,9 +41,8 @@ import {
     writeFinalStill
 } from "./psHost";
 
-declare const require: (id: string) => any;
-const fs = require("fs");
-const nodePath = require("path");
+import * as fs from "fs";
+import * as nodePath from "path";
 
 type Tab = "dashboard" | "sessions" | "archive" | "settings";
 

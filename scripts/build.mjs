@@ -91,6 +91,17 @@ const TEST_ENTRIES = {
     i18n: "cep/src/app/i18n.ts",
     psHost: "cep/src/app/psHost.ts",
     locales: "cep/src/app/locales/index.ts",
+    // The panel itself. One entry per component for the same reason as
+    // everything else here: a number for App.tsx should be about App.tsx.
+    app: "cep/src/app/App.tsx",
+    ui: "cep/src/app/components/ui.tsx",
+    dashboard: "cep/src/app/components/Dashboard.tsx",
+    sessionsView: "cep/src/app/components/Sessions.tsx",
+    settingsView: "cep/src/app/components/Settings.tsx",
+    exportDialog: "cep/src/app/components/ExportDialog.tsx",
+    packDialog: "cep/src/app/components/PackDialog.tsx",
+    review: "cep/src/app/components/Review.tsx",
+    watermark: "cep/src/app/components/Watermark.tsx",
     update: "generator/src/update.ts",
     stale: "shared/stale.ts",
     zip: "generator/src/zip.ts",
@@ -172,6 +183,10 @@ async function buildTestBundles() {
             platform: "node",
             format: "esm",
             target: "node18",
+            // The panel is preact; the components under test compile the same
+            // way here as they do in the shipped bundle.
+            jsx: "automatic",
+            jsxImportSource: "preact",
             // The same substitution the shipped bundle gets. Without it the
             // version would fall back to its dev default, and the test bundle
             // would be exercising a line the real one never runs.
