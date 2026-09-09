@@ -17,11 +17,11 @@
  * found missing it is written back immediately. That turns the manual patch in
  * 3.x into an automatic, permanent invariant.
  *
- * Constraint worth knowing: generator-core's setGeneratorSettings.jsx targets
- * the *active* document (`putEnumerated(classDocument, typeOrdinal, enumTarget)`)
- * while reads take an explicit document id. So a re-stamp can only be applied
- * to the document that is currently frontmost; for anything else we queue it
- * and retry when that document becomes active.
+ * Both halves of that are addressed by document id -- including the write,
+ * which Adobe's own setGeneratorSettings.jsx is not; see stamp.ts for why the
+ * plug-in sends its own script instead. A stamp therefore lands in the
+ * document it names, whatever is frontmost, and every write is read back by id
+ * to prove it. Queued stamps exist only for writes Photoshop refused outright.
  */
 
 import {
@@ -57,9 +57,13 @@ export interface DocInfo {
 /** Everything this module needs from Photoshop, so it can be faked in tests. */
 export interface PsGateway {
     getDocumentSettings(documentId: number): Promise<Record<string, unknown>>;
-    /** Applies to the frontmost document only -- see the note at the top. */
-    setActiveDocumentSettings(settings: Record<string, unknown>): Promise<void>;
-    getActiveDocumentId(): number | null;
+    /**
+     * Writes settings into this document, or reports that Photoshop declined
+     * because it is not the document in front. Photoshop cannot be made to
+     * write anywhere else, so `false` here is a normal answer and not a
+     * failure; see stamp.ts.
+     */
+    setDocumentSettings(documentId: number, settings: Record<string, unknown>): Promise<boolean>;
     /** False once Photoshop has closed the document. */
     isDocumentOpen(documentId: number): Promise<boolean>;
 }
@@ -72,6 +76,15 @@ export interface ResolvedSession {
     isNew: boolean;
     /** The PSD's copy of the id was missing and has been written back. */
     restamped: boolean;
+}
+
+/** One source of a document's identity, and what taking it would cost. */
+interface Candidate {
+    sessionId: string;
+    /** Named in the log when a candidate is rejected or repaired. */
+    source: string;
+    /** The PSD's copy disagrees with this and has to be written back. */
+    needsStamp: boolean;
 }
 
 export interface ResolveOutcome {
@@ -140,6 +153,8 @@ export class SessionResolver {
     private readonly docToSession: { [docId: number]: string } = {};
     /** Documents whose PSD copy still needs writing once they become active. */
     private readonly pendingStamps: { [docId: number]: string } = {};
+    /** Where the last retry left off, so no queued document starves. */
+    private stampCursor = 0;
 
     constructor(
         private readonly ps: PsGateway,
@@ -165,36 +180,83 @@ export class SessionResolver {
     }
 
     /**
-     * Writes the session id back into the PSD. Only the frontmost document can
-     * be written, so non-active documents are queued for `flushPendingStamps`.
+     * Writes the session id back into the PSD and proves it landed.
+     *
+     * The read is by document id and so cannot be aimed at the wrong document;
+     * it is the only witness worth having, because a write that reports
+     * success has only told us Photoshop ran the script, not what it ran it
+     * against. Anything short of the id coming back out of *this* document is
+     * a failure and is queued for `flushPendingStamps`.
      */
     private async stamp(documentId: number, sessionId: string): Promise<boolean> {
-        if (this.ps.getActiveDocumentId() !== documentId) {
-            this.pendingStamps[documentId] = sessionId;
+        try {
+            if (await this.ps.setDocumentSettings(documentId, { sessionId: sessionId })) {
+                const readBack = await this.readStoredSessionId(documentId);
+                if (readBack !== sessionId) {
+                    throw new Error(
+                        "it still reads " + (readBack === null ? "nothing" : "'" + readBack + "'")
+                    );
+                }
+                delete this.pendingStamps[documentId];
+                return true;
+            }
+        } catch (e) {
+            this.queueStamp(documentId, sessionId, "warn", "could not be written: " + errText(e));
             return false;
         }
-        try {
-            await this.ps.setActiveDocumentSettings({ sessionId: sessionId });
-            delete this.pendingStamps[documentId];
-            return true;
-        } catch (e) {
-            this.pendingStamps[documentId] = sessionId;
-            this.log("warn", "Could not write session id into document " + documentId + ": " + errText(e));
-            return false;
+        // Nothing went wrong: Photoshop simply will not write into a document
+        // that is not in front, and this one is not. It waits its turn.
+        this.queueStamp(documentId, sessionId, "info", "waits until its document is in front again");
+        return false;
+    }
+
+    /**
+     * Remembers a stamp for `flushPendingStamps`, saying so once.
+     *
+     * Once, because the retry runs on the heartbeat: a document the artist has
+     * left for the afternoon would otherwise write a line a second.
+     */
+    private queueStamp(
+        documentId: number,
+        sessionId: string,
+        level: "info" | "warn",
+        what: string
+    ): void {
+        const alreadyQueued = this.pendingStamps[documentId] === sessionId;
+        this.pendingStamps[documentId] = sessionId;
+        if (!alreadyQueued) {
+            this.log(level, "Session id for document " + documentId + " " + what);
         }
     }
 
-    /** Retries stamps that were deferred because their document was not active. */
+    /**
+     * Retries one queued stamp.
+     *
+     * One per call, on the heartbeat: a write Photoshop is sitting on must not
+     * be joined by another every second, to be executed as a batch when it
+     * finally wakes up. In rotation, because Photoshop takes a write only for
+     * the document in front -- always starting at the same end of the queue
+     * would spend every attempt on a document the artist has left and never
+     * reach the one they are looking at. Documents Photoshop has since closed
+     * are dropped rather than retried forever.
+     */
     async flushPendingStamps(): Promise<void> {
-        const active = this.ps.getActiveDocumentId();
-        if (active === null) {
+        const keys = Object.keys(this.pendingStamps);
+        if (keys.length === 0) {
             return;
         }
-        const sessionId = this.pendingStamps[active];
-        if (!sessionId) {
+        const start = this.stampCursor % keys.length;
+        for (let n = 0; n < keys.length; n++) {
+            const documentId = parseInt(keys[(start + n) % keys.length], 10);
+            const sessionId = this.pendingStamps[documentId];
+            if (!(await this.ps.isDocumentOpen(documentId))) {
+                this.forgetDocument(documentId);
+                continue;
+            }
+            this.stampCursor = start + n + 1;
+            await this.stamp(documentId, sessionId);
             return;
         }
-        await this.stamp(active, sessionId);
     }
 
     /**
@@ -231,6 +293,103 @@ export class SessionResolver {
     }
 
     /**
+     * Every id that could be this document's, best first, with the ones whose
+     * folder has gone dropped and duplicates collapsed onto their best source.
+     */
+    private async candidateSessions(
+        doc: DocInfo,
+        config: Config,
+        filePath: string | null
+    ): Promise<Candidate[]> {
+        const out: Candidate[] = [];
+        const add = (sessionId: string | null, source: string, needsStamp: boolean): void => {
+            if (!sessionId || !this.sessionExists(config, sessionId)) {
+                return;
+            }
+            for (let i = 0; i < out.length; i++) {
+                if (out[i].sessionId === sessionId) {
+                    return;
+                }
+            }
+            out.push({ sessionId: sessionId, source: source, needsStamp: needsStamp });
+        };
+
+        const stored = await this.readStoredSessionId(doc.id);
+        const byPath = filePath ? this.index.findByFilePath(filePath) : null;
+        const claimant = byPath ? byPath.sessionId : null;
+
+        // A queued stamp means we already know the right id and merely could
+        // not write it yet, so whatever sits in the PSD is stale; trusting
+        // that would quietly revert the document to the session it was
+        // attached to before.
+        add(this.pendingStamps[doc.id] || null, "a queued write", true);
+
+        // The id in the PSD is normally the best evidence there is -- except
+        // when the file itself contradicts it.
+        if (filePath && stored && claimant && claimant !== stored &&
+            this.misdirectedStamp(config, stored, claimant, filePath)) {
+            this.log(
+                "warn",
+                "Document " + doc.id + " carries session " + stored + ", which has never been '" +
+                    filePath + "'; preferring " + claimant + ", which has. Something wrote the wrong " +
+                    "id into the document and it is being repaired"
+            );
+            add(claimant, "the recording that claims this file", true);
+        }
+        add(stored, "the document itself", false);
+
+        // Both of these mean the PSD's copy was wiped -- almost always by a
+        // Save As -- so it has to be written back.
+        add(this.docToSession[doc.id] || null, "this run's document map", true);
+        const indexed = this.index.findByDocumentId(doc.id);
+        add(indexed ? indexed.sessionId : null, "the recovery index", true);
+        add(claimant, "the file it is saved as", true);
+
+        return out;
+    }
+
+    /**
+     * True when the id inside the PSD cannot be about this document.
+     *
+     * A recording's manifest records every path its document has been saved
+     * to, and it is written by the one process that does the recording. So
+     * "this session has been at this path" is a stronger statement than "this
+     * PSD contains this id": the first is our own bookkeeping, the second is a
+     * value in a file that anything -- a misdirected write, a duplicated
+     * layer set, a file copied over another in Explorer -- can have put there.
+     *
+     * Only a straight contradiction counts: the stored session has never been
+     * at this path *and* another one has. A document being saved somewhere new
+     * fails the second half, and so is left alone; that is a Save As, which
+     * has its own handling and must not be mistaken for this.
+     */
+    private misdirectedStamp(
+        config: Config,
+        stored: string,
+        claimant: string,
+        filePath: string
+    ): boolean {
+        return (
+            !this.sessionClaimsPath(config, stored, filePath) &&
+            this.sessionClaimsPath(config, claimant, filePath)
+        );
+    }
+
+    /** Whether a session's own manifest records having been at this path. */
+    private sessionClaimsPath(config: Config, sessionId: string, filePath: string): boolean {
+        const folder = locateSession(config.processImageFolderPath, sessionId);
+        const manifest = folder ? readManifest(folder) : null;
+        const history = (manifest && manifest.filePathHistory) || [];
+        const needle = normalizePath(filePath);
+        for (let i = 0; i < history.length; i++) {
+            if (normalizePath(history[i]) === needle) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Finds -- or, when allowed, creates -- the session for a document.
      *
      * `allowCreate` is false when the user has not opted into recording new
@@ -242,91 +401,62 @@ export class SessionResolver {
         const docName = documentDisplayName(doc.file);
         const size = canvasSize(doc.bounds);
 
-        let sessionId: string | null = null;
-        let restamped = false;
-        // Steps 1-4 only choose an id; the write into the PSD happens once,
-        // after step 5 has had its say. A branched document must not be
-        // stamped with the id it is about to be denied.
-        let needsStamp = false;
+        // Everything that could name this document's recording, best first.
+        // Any one of them can be the only survivor of a Save As, a crash or a
+        // Photoshop restart, which is why there are five.
+        const sources = await this.candidateSessions(doc, config, filePath);
 
-        // 1. The PSD's own copy -- unless a stamp for this document is still
-        //    queued. A pending stamp means we already know the right id and
-        //    merely could not write it yet, so whatever sits in the PSD is
-        //    stale; trusting it here would quietly revert the document to the
-        //    session it was attached to before.
-        const stored = await this.readStoredSessionId(doc.id);
-        const pending = this.pendingStamps[doc.id];
-        if (pending && pending !== stored && this.sessionExists(config, pending)) {
-            sessionId = pending;
-            needsStamp = true;
-        } else if (stored && this.sessionExists(config, stored)) {
-            sessionId = stored;
-        }
-
-        // 2/3. In-memory map, then the persisted index by document id. Both mean
-        //      the PSD copy was wiped (almost always by a Save As), so repair it.
-        if (!sessionId) {
-            const remembered = this.docToSession[doc.id] || null;
-            const indexed = remembered ? null : this.index.findByDocumentId(doc.id);
-            const candidate = remembered || (indexed ? indexed.sessionId : null);
-            if (candidate && this.sessionExists(config, candidate)) {
-                sessionId = candidate;
-                needsStamp = true;
+        let chosen: Candidate | null = null;
+        for (let i = 0; i < sources.length; i++) {
+            // One session, one document. Two documents claiming the same id
+            // means the drawing was branched in two -- see the note on
+            // heldByAnotherOpenDocument -- and the newcomer must not
+            // interleave its frames into someone else's recording. The next
+            // candidate is tried rather than giving up on the spot: the id in
+            // a PSD can be wrong, and the file's own recording is usually
+            // sitting right behind it.
+            if (await this.heldByAnotherOpenDocument(sources[i].sessionId, doc.id)) {
+                this.log(
+                    "info",
+                    "Document " + doc.id + " ('" + docName + "') gets session " + sources[i].sessionId +
+                        " from " + sources[i].source + ", but another open document is already " +
+                        "recording it; looking further"
+                );
+                continue;
             }
+            chosen = sources[i];
+            break;
         }
 
-        // 4. Same file on disk as a session we already know about.
-        if (!sessionId && filePath) {
-            const byPath = this.index.findByFilePath(filePath);
-            if (byPath && this.sessionExists(config, byPath.sessionId)) {
-                sessionId = byPath.sessionId;
-                needsStamp = true;
-            }
-        }
-
-        // 5. One session, one document. Two documents claiming the same id
-        //    means the drawing was branched in two -- see the note on
-        //    heldByAnotherOpenDocument -- and the newcomer gets its own
-        //    recording rather than interleaving frames into someone else's.
-        if (sessionId && (await this.heldByAnotherOpenDocument(sessionId, doc.id))) {
-            this.log(
-                "info",
-                "Document " + doc.id + " ('" + docName + "') carries session " + sessionId +
-                    ", which another open document is already recording; branching it into its own recording"
-            );
-            sessionId = null;
-            needsStamp = false;
-        }
-
-        if (sessionId && needsStamp) {
-            this.docToSession[doc.id] = sessionId;
-            restamped = await this.stamp(doc.id, sessionId);
-        }
-
-        // 6. Nothing matched. Collect same-canvas sessions for the panel to
-        //    offer, rather than adopting one behind the user's back.
-        const candidates = sessionId ? [] : this.canvasCandidates(config, size, doc.id);
-
-        if (!sessionId) {
+        if (!chosen) {
+            // Nothing matched. Collect same-canvas sessions for the panel to
+            // offer, rather than adopting one behind the user's back.
+            const candidates = this.canvasCandidates(config, size, doc.id);
             if (!allowCreate) {
                 return { session: null, candidates: candidates };
             }
-            sessionId = newSessionId();
-            const folder = sessionFolder(config.processImageFolderPath, sessionId);
+            const fresh = newSessionId();
+            const folder = sessionFolder(config.processImageFolderPath, fresh);
             mkdirp(folder);
-            writeManifest(folder, createManifest(sessionId, docName, filePath, doc.bounds, config));
-            this.docToSession[doc.id] = sessionId;
-            await this.stamp(doc.id, sessionId);
-            this.log("info", "Started session " + sessionId + " for '" + docName + "'");
+            writeManifest(folder, createManifest(fresh, docName, filePath, doc.bounds, config));
+            this.docToSession[doc.id] = fresh;
+            await this.stamp(doc.id, fresh);
+            this.log("info", "Started session " + fresh + " for '" + docName + "'");
             return {
                 // isNew, but not "restamped": this is the first stamp, not a repair.
-                session: this.finish(doc, config, sessionId, docName, filePath, size, true, false),
+                session: this.finish(doc, config, fresh, docName, filePath, size, true, false),
                 candidates: []
             };
         }
 
+        // Claimed before the stamp is awaited, for the reason forkForSaveAs
+        // gives: a repair that was already reading the PSD must see the new
+        // owner and stand down rather than writing the old id back on top.
+        this.docToSession[doc.id] = chosen.sessionId;
+        const restamped = chosen.needsStamp ? await this.stamp(doc.id, chosen.sessionId) : false;
+
         return {
-            session: this.finish(doc, config, sessionId, docName, filePath, size, false, restamped),
+            session: this.finish(doc, config, chosen.sessionId, docName, filePath, size, false, restamped),
             candidates: []
         };
     }

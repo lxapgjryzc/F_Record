@@ -33,11 +33,9 @@ import { WatermarkSettings, normalizeWatermark, watermarkDraws } from "../../../
 import { clipboardTempDir, exportTempDir } from "../../../shared/paths";
 import { assign, mkdirp, rmrf, writeFileAtomic } from "../../../shared/compat";
 
-declare const require: (id: string) => any;
-
-const fs = require("fs");
-const path = require("path");
-const childProcess = require("child_process");
+import * as childProcess from "child_process";
+import * as fs from "fs";
+import * as path from "path";
 
 export interface ExportProgress {
     stage: "preparing" | "encoding" | "finishing";

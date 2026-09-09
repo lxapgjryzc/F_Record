@@ -1,11 +1,15 @@
 /**
- * End-to-end test of the built Generator plug-in against a mock Photoshop.
+ * End-to-end test of the Generator plug-in against a mock Photoshop.
  *
- * This loads `dist/generator/.../index.js` -- the exact bundle that ships --
- * and drives it through the same API generator-core uses: init(), then
- * Photoshop events. It covers the wiring the unit tests cannot: the HTTP
- * bridge, command handling, the capture path writing a real JPEG, and the
- * expensive-document guard actually being applied to getDocumentInfo.
+ * This drives the whole plug-in through the same API generator-core uses --
+ * init(), then Photoshop events -- and covers the wiring the unit tests
+ * cannot: the HTTP bridge, command handling, the capture path writing a real
+ * JPEG, and the expensive-document guard actually being applied to
+ * getDocumentInfo.
+ *
+ * It loads the module rather than the shipped bundle, which inlines every
+ * module below it and would credit all of them with one number; artifact.
+ * test.mjs is what proves the bundle itself still starts.
  */
 
 import { test } from "node:test";
@@ -13,12 +17,11 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as http from "node:http";
-import { createRequire } from "node:module";
 
 import { withIsolatedAppDir, tempDir, flush } from "./helpers.mjs";
+import { makeJsxEngine } from "./photoshop.mjs";
+import { init } from "../dist/modules/index.mjs";
 
-const require = createRequire(import.meta.url);
-const BUNDLE = path.resolve("dist/generator/com.f_know.f_record.generator/index.js");
 const BOUNDS = { top: 0, left: 0, right: 800, bottom: 600 };
 const DEFAULT_DOC_FILE = "C:" + String.fromCharCode(92) + "art" + String.fromCharCode(92) + "test.psd";
 
@@ -49,6 +52,14 @@ function makeMockPhotoshop(initialFile) {
     const calls = { documentInfo: [], pixmap: [] };
     let documentFile = initialFile || DEFAULT_DOC_FILE;
 
+    // Photoshop does the write by running a script, and it resolves the
+    // document reference itself; see test/photoshop.mjs.
+    const writeSettings = makeJsxEngine({
+        frontmost: () => 1,
+        isOpen: () => true,
+        write: (id, key, json) => settings.set(id, JSON.parse(json))
+    });
+
     const generator = {
         getDocumentInfo(documentId, flags) {
             calls.documentInfo.push({ documentId, flags });
@@ -72,9 +83,8 @@ function makeMockPhotoshop(initialFile) {
             }
             return Promise.resolve(settings.get(documentId));
         },
-        setDocumentSettingsForPlugin(value) {
-            settings.set(1, value);
-            return Promise.resolve();
+        evaluateJSXString(script) {
+            return Promise.resolve(writeSettings(script));
         },
         onPhotoshopEvent(event, listener) {
             if (!listeners.has(event)) {
@@ -150,10 +160,8 @@ async function startPlugin(initialFile, options = {}) {
     const env = withIsolatedAppDir();
     // The bundle caches nothing across requires, but clear it anyway so each
     // test gets a fresh module instance.
-    delete require.cache[BUNDLE];
-    const plugin = require(BUNDLE);
     const ps = makeMockPhotoshop(initialFile);
-    const handle = plugin.init(ps.generator, options, null);
+    const handle = init(ps.generator, options, null);
     await handle.ready;
 
     const bridgeFile = path.join(env.dir, "F_Record", "bridge.json");

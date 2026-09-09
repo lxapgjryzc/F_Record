@@ -229,6 +229,7 @@ export class UpdateChecker {
             return { outcome: "failed", message: "A check is already running" };
         }
         this.inFlight = true;
+        let result: { outcome: "newer" | "current" | "failed"; message?: string };
         try {
             const info = await this.fetch();
             this.lastCheckedAt = this.now();
@@ -237,19 +238,23 @@ export class UpdateChecker {
             this.options.onChange();
             if (newer) {
                 this.options.log("info", "F_Record " + info.version + " is available");
-                return { outcome: "newer" };
+                result = { outcome: "newer" };
+            } else {
+                result = { outcome: "current" };
             }
-            return { outcome: "current" };
         } catch (e) {
             // Not being able to reach GitHub is not a fault worth shouting
             // about; it is retried on the next interval.
             this.lastCheckedAt = this.now();
             const message = e && (e as Error).message ? (e as Error).message : String(e);
             this.options.log("info", "Update check did not complete: " + message);
-            return { outcome: "failed", message: message };
+            result = { outcome: "failed", message: message };
         } finally {
+            // Cleared however this ended, including when the log sink itself
+            // threw: leaving it set would wedge every later check.
             this.inFlight = false;
         }
+        return result;
     }
 
     /** Null unless a check found something strictly newer than what is running. */

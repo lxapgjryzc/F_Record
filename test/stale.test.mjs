@@ -10,7 +10,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { DAY_MS, isStale, staleSessions } from "../dist/test/stale.mjs";
+import { DAY_MS, isStale, staleSessions } from "../dist/modules/stale.mjs";
 
 const NOW = 1_700_000_000_000;
 

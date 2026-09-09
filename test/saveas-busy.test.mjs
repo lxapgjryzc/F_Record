@@ -9,7 +9,7 @@
  * Recording must pick up on the copy as soon as Photoshop answers, without
  * waiting for anything else.
  *
- * Drives the real built generator bundle, like integration.test.mjs.
+ * Drives the whole generator against a mock Photoshop, like integration.test.mjs.
  */
 
 import { test } from "node:test";
@@ -17,12 +17,11 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as http from "node:http";
-import { createRequire } from "node:module";
 
 import { withIsolatedAppDir, tempDir } from "./helpers.mjs";
+import { makeJsxEngine } from "./photoshop.mjs";
+import { init } from "../dist/modules/index.mjs";
 
-const require = createRequire(import.meta.url);
-const BUNDLE = path.resolve("dist/generator/com.f_know.f_record.generator/index.js");
 
 function bounds(width, height) {
     return { top: 0, left: 0, right: width, bottom: height };
@@ -58,6 +57,14 @@ function makeBusyPhotoshop(initialFile) {
     let infoGate = null;
     let swallowNextInfo = false;
 
+    // Photoshop does the write by running a script, and it resolves the
+    // document reference itself; see test/photoshop.mjs.
+    const writeSettings = makeJsxEngine({
+        frontmost: () => 1,
+        isOpen: () => true,
+        write: (id, key, json) => settings.set(id, JSON.parse(json))
+    });
+
     const generator = {
         getDocumentInfo() {
             calls.documentInfo++;
@@ -81,9 +88,8 @@ function makeBusyPhotoshop(initialFile) {
             }
             return Promise.resolve(settings.get(documentId));
         },
-        setDocumentSettingsForPlugin(value) {
-            settings.set(1, value);
-            return Promise.resolve();
+        evaluateJSXString(script) {
+            return Promise.resolve(writeSettings(script));
         },
         onPhotoshopEvent(event, listener) {
             if (!listeners.has(event)) {
@@ -188,10 +194,8 @@ async function startPlugin(initialFile, pluginOptions = {}) {
         JSON.stringify({ enabled: true, minIntervalMs: 100, autoStartNewDocuments: true })
     );
 
-    delete require.cache[BUNDLE];
-    const plugin = require(BUNDLE);
     const ps = makeBusyPhotoshop(initialFile);
-    const handle = plugin.init(ps.generator, pluginOptions, null);
+    const handle = init(ps.generator, pluginOptions, null);
     await handle.ready;
 
     const bridgeFile = path.join(appDir, "bridge.json");
@@ -298,7 +302,9 @@ test("a document-info request Photoshop never answers is given up on, loudly, an
 
     // Nothing can be recorded until the lost request is written off. Once it
     // is, the frame that was waiting must be taken against the new canvas.
-    await waitFor(() => framesIn(folder).length > before, 3000, "a frame after the lost request");
+    // Generous: the wait is for a real stall timer plus a debounce plus a
+    // capture, and the suite runs this under coverage instrumentation.
+    await waitFor(() => framesIn(folder).length > before, 10000, "a frame after the lost request");
     assert.match(h.log(), /has not answered a document-info request for \d+s; asking again/);
     assert.equal(
         (h.log().match(/has not answered/g) || []).length,

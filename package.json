@@ -6,9 +6,11 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node scripts/build.mjs --tests && node --test \"test/*.test.mjs\"",
-    "check": "npm run typecheck && npm test",
-    "test:only": "node --test \"test/*.test.mjs\""
+    "test": "node scripts/build.mjs --tests && node --experimental-test-module-mocks --test --test-timeout=60000 \"test/*.test.mjs\"",
+    "check": "npm run typecheck && npm run coverage:identity",
+    "test:only": "node --experimental-test-module-mocks --test --test-timeout=60000 \"test/*.test.mjs\"",
+    "coverage": "node scripts/build.mjs --tests && node --experimental-test-module-mocks --test --test-timeout=60000 --experimental-test-coverage --test-coverage-include=dist/modules/*.mjs \"test/*.test.mjs\"",
+    "coverage:identity": "node scripts/build.mjs --tests && node --experimental-test-module-mocks --test --test-timeout=60000 --experimental-test-coverage --test-coverage-include=dist/modules/*.mjs --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100 \"test/*.test.mjs\""
   },
   "repository": {
     "type": "git",

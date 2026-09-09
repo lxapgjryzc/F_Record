@@ -8,3 +8,7 @@
 # ffmpeg is fetched by scripts/install.ps1, never committed. A 138 MB binary
 # in git history is exactly what made this repository 165 MB.
 /cep/vendor/
+
+# The lcov file the coverage report is asked for when a branch has to be
+# found by hand; see the coverage scripts in package.json.
+/cov.info

@@ -11,9 +11,9 @@
  * write to; see test/clipboard.test.mjs.
  */
 
+import * as childProcess from "child_process";
+import * as path from "path";
 import { writeFileAtomic } from "../../../shared/compat";
-
-declare const require: (id: string) => any;
 
 /**
  * The Windows half, as a script rather than a `-Command` string.
@@ -104,14 +104,13 @@ export function clipboardCommand(
 /**
  * Puts the PNG at `imagePath` on the clipboard.
  *
- * Node is reached for here rather than at the top of the file so that the
- * builders above can be imported by the test suite, which runs outside CEP and
- * has no `require` global to give this module.
+ * Node's builtins are imported at the top rather than `require`d here. Both
+ * work inside CEP -- the panel bundle turns either into a `require` the host
+ * provides -- but an import is also resolvable outside it, which is what lets
+ * the test suite drive this function instead of only the builders above.
  */
 export function copyImageToClipboard(imagePath: string, tempDir: string): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-        const path = require("path");
-        const childProcess = require("child_process");
         const scriptPath = path.join(tempDir, "clipboard.ps1");
         if (process.platform === "win32") {
             try {

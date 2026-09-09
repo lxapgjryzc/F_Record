@@ -69,32 +69,102 @@ function sizeOf(target) {
  * extensionless relative imports. Bundling each module under test to ESM keeps
  * the tests dependency-free and exercises the same code esbuild ships.
  */
+const TEST_ENTRIES = {
+    index: "generator/src/index.ts",
+    bridge: "generator/src/bridge.ts",
+    logger: "generator/src/logger.ts",
+    capture: "generator/src/capture.ts",
+    framing: "generator/src/framing.ts",
+    session: "generator/src/session.ts",
+    stamp: "generator/src/stamp.ts",
+    store: "generator/src/store.ts",
+    encoder: "generator/src/encoder.ts",
+    compat: "shared/compat.ts",
+    paths: "shared/paths.ts",
+    protocol: "shared/protocol.ts",
+    exportPlan: "cep/src/node/export.ts",
+    clipboard: "cep/src/node/clipboard.ts",
+    locate: "cep/src/node/locate.ts",
+    ffmpeg: "cep/src/node/ffmpeg.ts",
+    // The panel has a bridge of its own; the generator's is `bridge`.
+    panelBridge: "cep/src/app/bridge.ts",
+    i18n: "cep/src/app/i18n.ts",
+    psHost: "cep/src/app/psHost.ts",
+    locales: "cep/src/app/locales/index.ts",
+    update: "generator/src/update.ts",
+    stale: "shared/stale.ts",
+    zip: "generator/src/zip.ts",
+    trash: "generator/src/trash.ts",
+    housekeeping: "generator/src/housekeeping.ts"
+};
+
+/**
+ * Leaves imports between modules under test as imports.
+ *
+ * Bundling each entry with its dependencies inlined would put four other
+ * modules inside session.mjs, and a coverage report over that file would be
+ * measuring the wrong thing: it could never reach 100% without tests for
+ * every line of everything session.ts happens to import, and a line it did
+ * cover could belong to any of them. One output file per source file keeps
+ * the numbers about the file they are named after. Anything that is not
+ * itself an entry -- the ten locale dictionaries, say -- is still inlined.
+ *
+ * The same reasoning is why coverage is measured over dist/modules and not
+ * over dist/generator/index.js: that bundle inlines every module below it, so
+ * a number for it would be an average over files that are each already
+ * measured here, and reaching 100% on it would mean driving every module's
+ * error paths through a whole running plug-in. The shipped bundle is still
+ * under test -- integration.test.mjs and its neighbours load that exact file
+ * -- it is just not what the percentages are about.
+ */
+function siblingModules() {
+    const bySource = new Map();
+    for (const [name, entry] of Object.entries(TEST_ENTRIES)) {
+        bySource.set(path.resolve(root, entry), "./" + name + ".mjs");
+    }
+    return {
+        name: "sibling-modules",
+        setup(build) {
+            build.onResolve({ filter: /^./ }, (args) => {
+                if (args.kind === "entry-point") {
+                    return null;
+                }
+                const target = path.resolve(args.resolveDir, args.path);
+                // `./locales` is a directory whose index.ts is an entry, so
+                // the index forms are tried too -- without them that entry
+                // would be inlined into whatever imported it and measured
+                // twice, once as itself and once inside its importer.
+                const forms = [
+                    target,
+                    target + ".ts",
+                    target + ".tsx",
+                    path.join(target, "index.ts"),
+                    path.join(target, "index.tsx")
+                ];
+                for (const form of forms) {
+                    const sibling = bySource.get(form);
+                    if (sibling) {
+                        return { path: sibling, external: true };
+                    }
+                }
+                return null;
+            });
+        }
+    };
+}
+
+/**
+ * `dist/modules`, not `dist/test`: node --test treats everything under a
+ * directory called `test` as a test file and leaves it out of the coverage
+ * report, so the modules under test would silently measure nothing.
+ */
 async function buildTestBundles() {
-    const out = path.join(dist, "test");
+    const out = path.join(dist, "modules");
     rmrf(out);
     mkdirp(out);
 
-    const entries = {
-        capture: "generator/src/capture.ts",
-        framing: "generator/src/framing.ts",
-        session: "generator/src/session.ts",
-        store: "generator/src/store.ts",
-        encoder: "generator/src/encoder.ts",
-        compat: "shared/compat.ts",
-        paths: "shared/paths.ts",
-        protocol: "shared/protocol.ts",
-        exportPlan: "cep/src/node/export.ts",
-        clipboard: "cep/src/node/clipboard.ts",
-        locate: "cep/src/node/locate.ts",
-        locales: "cep/src/app/locales/index.ts",
-        update: "generator/src/update.ts",
-        stale: "shared/stale.ts",
-        zip: "generator/src/zip.ts",
-        trash: "generator/src/trash.ts",
-        housekeeping: "generator/src/housekeeping.ts"
-    };
-
-    for (const [name, entry] of Object.entries(entries)) {
+    const plugin = siblingModules();
+    for (const [name, entry] of Object.entries(TEST_ENTRIES)) {
         await esbuild.build({
             entryPoints: [path.join(root, entry)],
             outfile: path.join(out, name + ".mjs"),
@@ -102,10 +172,18 @@ async function buildTestBundles() {
             platform: "node",
             format: "esm",
             target: "node18",
+            // The same substitution the shipped bundle gets. Without it the
+            // version would fall back to its dev default, and the test bundle
+            // would be exercising a line the real one never runs.
+            define: { __PLUGIN_VERSION__: JSON.stringify(VERSION) },
+            // Dependencies stay imports as well, so a coverage report is
+            // about our code and not about jpeg-js.
+            packages: "external",
+            plugins: [plugin],
             logLevel: "warning"
         });
     }
-    log("built test bundles -> dist/test");
+    log("built modules under test -> dist/modules");
 }
 
 /* ----------------------------------------------------------------- shared */
@@ -263,7 +341,7 @@ function writeZip() {
     const archive = path.join(releaseDir, "F_Record-" + VERSION + ".zip");
     rmrf(archive);
     // Test bundles are a build artifact, not something users need.
-    rmrf(path.join(dist, "test"));
+    rmrf(path.join(dist, "modules"));
     // Compress-Archive ships with Windows PowerShell, so the release build has
     // no extra dependency.
     execFileSync(
@@ -283,7 +361,7 @@ function writeZip() {
 
 async function main() {
     if (testsOnly) {
-        // The generator bundle too, not just dist/test: integration.test.mjs
+        // The generator bundle too, not just dist/modules: integration.test.mjs
         // drives the exact file that ships, and building only the test bundles
         // left it asserting against whatever the last full build produced.
         await buildGenerator();

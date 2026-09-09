@@ -11,7 +11,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CaptureScheduler } from "../dist/test/capture.mjs";
+import { CaptureScheduler } from "../dist/modules/capture.mjs";
 import { makeClock, flush, deferred } from "./helpers.mjs";
 
 function makeScheduler(overrides = {}) {
@@ -340,4 +340,163 @@ test("whenIdle is released by dispose, so a caller is never stranded", async () 
     await flush();
 
     assert.equal(released, true);
+});
+
+test("a capture that comes back after the watchdog gave up on it changes nothing", async () => {
+    const h = makeScheduler();
+    h.scheduler.setEnabled(true);
+    h.scheduler.notifyChange();
+    await h.clock.advance(0);
+
+    await h.clock.advance(30000); // the watchdog writes it off
+    assert.equal(h.scheduler.getStats().consecutiveFailures, 1);
+    const afterTimeout = h.scheduler.getStats();
+
+    // Photoshop wakes up and the original promise resolves, long after we
+    // stopped waiting. Counting it now would reset the failure streak and
+    // credit a capture that never produced a frame.
+    await h.finish();
+
+    assert.deepEqual(h.scheduler.getStats(), afterTimeout, "the late answer is ignored");
+});
+
+test("raising the floor lifts an interval that is under it, and leaves a longer one alone", async () => {
+    const h = makeScheduler();
+    h.scheduler.setEnabled(true);
+    assert.equal(h.scheduler.getStats().nextIntervalMs, 1000);
+
+    // The panel's "capture at most every N seconds" setting, changed mid-take.
+    h.scheduler.setMinInterval(4000);
+    assert.equal(h.scheduler.getStats().nextIntervalMs, 4000, "the pending wait is lifted to the new floor");
+
+    // A backoff that is already longer than the floor is the scheduler
+    // protecting Photoshop, and lowering it would undo that.
+    h.scheduler.notifyChange();
+    await h.clock.advance(0);
+    await h.clock.advance(3000);
+    await h.finish();
+    assert.equal(h.scheduler.getStats().nextIntervalMs, 9000, "3x the observed cost");
+    h.scheduler.setMinInterval(5000);
+    assert.equal(h.scheduler.getStats().nextIntervalMs, 9000);
+});
+
+test("setting enabled to what it already is changes nothing", async () => {
+    const h = makeScheduler();
+    h.scheduler.setEnabled(true);
+    h.scheduler.notifyChange();
+    await h.clock.advance(0);
+    await h.clock.advance(2000);
+    await h.finish();
+    assert.equal(h.scheduler.getStats().nextIntervalMs, 6000);
+
+    // The plug-in calls this on every config change, not only on real ones.
+    // Treating a repeat as a fresh start would throw away the backoff that is
+    // keeping a heavy document responsive.
+    h.scheduler.setEnabled(true);
+    assert.equal(h.scheduler.getStats().nextIntervalMs, 6000);
+    assert.equal(h.scheduler.isEnabled(), true);
+
+    h.scheduler.setEnabled(false);
+    assert.equal(h.scheduler.isEnabled(), false);
+    h.scheduler.setEnabled(false);
+    assert.equal(h.scheduler.isEnabled(), false);
+});
+
+test("resuming something that was never paused is not a way to clear a backoff", async () => {
+    const h = makeScheduler();
+    h.scheduler.setEnabled(true);
+    h.scheduler.notifyChange();
+    await h.clock.advance(0);
+    await h.clock.advance(2000);
+    await h.finish();
+    assert.equal(h.scheduler.getStats().nextIntervalMs, 6000);
+
+    h.scheduler.resume();
+
+    assert.equal(h.scheduler.getStats().nextIntervalMs, 6000, "still backed off");
+    assert.equal(h.scheduler.getStats().pausedReason, null);
+});
+
+test("without injected timers it runs on the real clock", async () => {
+    // Every other test here drives an injected clock, which means the default
+    // timers -- the ones the plug-in actually ships with -- would otherwise
+    // never run at all.
+    const calls = [];
+    const scheduler = new CaptureScheduler({
+        minIntervalMs: 5,
+        capture: async () => {
+            calls.push(Date.now());
+        }
+    });
+
+    scheduler.setEnabled(true);
+    scheduler.notifyChange();
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.ok(calls.length >= 1, "a real setTimeout fired and a real capture ran");
+
+    // And a pending real timer is really cancelled, rather than firing into a
+    // scheduler that has been switched off.
+    scheduler.notifyChange();
+    scheduler.setEnabled(false);
+    const seen = calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.equal(calls.length, seen, "nothing ran after it was disabled");
+
+    scheduler.dispose();
+});
+
+test("a change queued while the scheduler is auto-pausing does not sneak a capture past it", async () => {
+    // The window is real: a failure is counted and logged first, and only then
+    // is the pause decided. A change that lands in between gets a timer, and
+    // that timer is still pending when the pause is imposed -- nothing cancels
+    // it. So the thing that has to refuse is the capture itself, when its turn
+    // comes. The log sink is only how the test lands a change in that window.
+    const reasons = [];
+    let scheduler = null;
+    const h = makeScheduler({
+        failureThreshold: 2,
+        onAutoPause: (reason) => reasons.push(reason),
+        log: (level, message) => {
+            if (level === "warn" && message.indexOf("Capture failed") === 0) {
+                scheduler.notifyChange();
+            }
+        }
+    });
+    scheduler = h.scheduler;
+
+    h.scheduler.setEnabled(true);
+    h.scheduler.notifyChange();
+    await h.clock.advance(0);
+    await h.finish(new Error("first"));
+
+    // The queued change becomes the second attempt, which fails and trips the
+    // threshold -- leaving a timer behind it.
+    await h.clock.advance(5000);
+    assert.equal(h.calls.length, 2);
+    await h.finish(new Error("second"));
+
+    assert.equal(reasons.length, 1, "auto-paused");
+    const before = h.calls.length;
+    await h.clock.advance(60000);
+    assert.equal(h.calls.length, before, "the pending timer fired into a paused scheduler and stopped");
+    assert.match(h.scheduler.getStats().pausedReason, /2 consecutive capture failures/);
+});
+
+test("a capture that rejects with something that is not an Error is still counted", async () => {
+    const h = makeScheduler();
+    h.scheduler.setEnabled(true);
+    h.scheduler.notifyChange();
+    await h.clock.advance(0);
+
+    // Photoshop's own failures come back through generator-core's IPC and
+    // arrive as whatever they were serialised as -- often a bare string, or an
+    // object that merely looks like an error.
+    await h.finish("Photoshop is not responding");
+    assert.equal(h.scheduler.getStats().consecutiveFailures, 1);
+    assert.equal(h.scheduler.getStats().droppedFrames, 1);
+
+    h.scheduler.notifyChange();
+    await h.clock.advance(60000);
+    await h.finish({ message: "still not responding" });
+    assert.equal(h.scheduler.getStats().consecutiveFailures, 2);
 });

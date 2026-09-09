@@ -17,73 +17,25 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { SessionResolver, isSaveAsRename } from "../dist/test/session.mjs";
-import { SessionIndex } from "../dist/test/store.mjs";
-import { tempDir } from "./helpers.mjs";
+import {
+    SessionResolver,
+    canvasSize,
+    documentDisplayName,
+    isSaveAsRename
+} from "../dist/modules/session.mjs";
+import { SessionIndex } from "../dist/modules/store.mjs";
+import { tempDir, withIsolatedAppDir } from "./helpers.mjs";
+import { makePhotoshop } from "./photoshop.mjs";
 
 const BOUNDS = { top: 0, left: 0, right: 2000, bottom: 1500 };
 const SEP = String.fromCharCode(92);
 
-/** Stand-in for Photoshop's generatorSettings storage. */
-function makePhotoshop() {
-    const stored = new Map();
-    const open = new Set();
-    let active = null;
-    let writesFail = false;
-    return {
-        setActive(id) {
-            active = id;
-            open.add(id);
-        },
-        /** Photoshop closing a document, with or without telling us. */
-        close(id) {
-            open.delete(id);
-            if (active === id) {
-                active = null;
-            }
-        },
-        /** Photoshop refusing to store settings, e.g. while a dialog is up. */
-        setWritesFail(value) {
-            writesFail = value;
-        },
-        /** What Photoshop does to a document on Save As. */
-        wipeSettings(id) {
-            stored.delete(id);
-        },
-        peek(id) {
-            return stored.get(id);
-        },
-        gateway: {
-            async getDocumentSettings(documentId) {
-                const value = stored.get(documentId);
-                if (value === undefined) {
-                    // generator-core throws rather than returning {} when a
-                    // document has no generatorSettings at all.
-                    throw new Error("no generatorSettings");
-                }
-                return value;
-            },
-            async setActiveDocumentSettings(settings) {
-                if (active === null) {
-                    throw new Error("no active document");
-                }
-                if (writesFail) {
-                    throw new Error("Photoshop rejected the write");
-                }
-                stored.set(active, settings);
-            },
-            getActiveDocumentId() {
-                return active;
-            },
-            async isDocumentOpen(documentId) {
-                return open.has(documentId);
-            }
-        }
-    };
-}
-
 function setup(runId = "run-1") {
-    const temp = tempDir();
+    // The recovery index lives under %APPDATA%. Without a temporary one,
+    // the suite reads and rewrites the real installation's.
+    const app = withIsolatedAppDir();
+    const folders = tempDir();
+    const temp = { dir: folders.dir, cleanup: () => { folders.cleanup(); app.cleanup(); } };
     const processImageFolderPath = path.join(temp.dir, "processImages");
     fs.mkdirSync(processImageFolderPath, { recursive: true });
     const config = {
@@ -198,8 +150,7 @@ test("closing and reopening a document resumes via the PSD copy", async (t) => {
     // the file.
     s.resolver.forgetDocument(1);
     s.ps.setActive(7);
-    const settings = s.ps.peek(1);
-    s.ps.gateway.setActiveDocumentSettings(settings);
+    s.ps.carrySettings(1, 7);
 
     const again = await s.resolver.resolve({ id: 7, file: "C:\\art\\a.psd", bounds: BOUNDS }, s.config, true);
     assert.equal(again.session.sessionId, sessionId);
@@ -300,32 +251,126 @@ test("a session already attached to another open document is not offered", async
     assert.equal(outcome.candidates.length, 0, "document 1 is still using it");
 });
 
-test("a stamp deferred because the document was not frontmost is retried later", async (t) => {
+// Photoshop will write generatorSettings only into the document in front --
+// no reference form names another, verified against 27.2 -- so a repair
+// noticed while the artist is looking elsewhere has to wait. What must never
+// happen is the write going to the document that *is* in front instead,
+// which is what orphaned a 2460 frame recording on 2026-09-09.
+test("a repair for a document that is not frontmost waits rather than misfiring", async (t) => {
     const s = setup();
     t.after(() => s.temp.cleanup());
 
     s.ps.setActive(1);
-    const first = await s.resolver.resolve({ id: 1, file: "C:\\art\\f.psd", bounds: BOUNDS }, s.config, true);
+    const first = await s.resolver.resolve({ id: 1, file: "C:\art\f.psd", bounds: BOUNDS }, s.config, true);
     const sessionId = first.session.sessionId;
 
-    // Photoshop can only write generatorSettings to the frontmost document, so
-    // a Save As noticed while another document is in front cannot be repaired
-    // immediately.
+    // Save As, noticed while the artist is already looking at another document.
     s.ps.wipeSettings(1);
     s.ps.setActive(2);
-    const deferredStamp = await s.resolver.resolve(
-        { id: 1, file: "C:\\art\\f2.psd", bounds: BOUNDS },
+    const deferred = await s.resolver.resolve(
+        { id: 1, file: "C:\art\f2.psd", bounds: BOUNDS },
         s.config,
         true
     );
-    assert.equal(deferredStamp.session.sessionId, sessionId, "recording still continues correctly");
-    assert.equal(deferredStamp.session.restamped, false, "but the PSD could not be written yet");
-    assert.equal(s.ps.peek(1), undefined);
 
-    // When it comes back to the front, the stamp lands.
+    assert.equal(deferred.session.sessionId, sessionId, "recording continues correctly");
+    assert.equal(deferred.session.restamped, false, "the PSD could not be written yet");
+    assert.equal(s.ps.peek(1), undefined);
+    assert.equal(s.ps.peek(2), undefined, "and nothing went into the document in front");
+
+    // It lands as soon as the document is back in front.
     s.ps.setActive(1);
     await s.resolver.flushPendingStamps();
-    assert.equal(s.ps.peek(1).sessionId, sessionId, "repaired once the document is frontmost again");
+    assert.equal(s.ps.peek(1).sessionId, sessionId, "repaired once its document is frontmost");
+});
+
+test("a queued stamp is said once, not once a second", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    s.ps.setActive(1);
+    await s.resolver.resolve({ id: 1, file: "C:\art\q.psd", bounds: BOUNDS }, s.config, true);
+    s.ps.wipeSettings(1);
+    s.ps.setActive(2);
+    await s.resolver.resolve({ id: 1, file: "C:\art\q2.psd", bounds: BOUNDS }, s.config, true);
+
+    for (let i = 0; i < 5; i++) {
+        await s.resolver.flushPendingStamps();
+    }
+    const said = s.logs.filter((line) => /waits until its document is in front/.test(line));
+    assert.equal(said.length, 1, "the log does not fill up with retries");
+});
+
+test("two documents waiting to be stamped take turns", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    // Both are recorded, both lose their id, and neither is in front.
+    for (const id of [1, 2]) {
+        s.ps.setActive(id);
+        await s.resolver.resolve({ id, file: "C:\art\t" + id + ".psd", bounds: BOUNDS }, s.config, true);
+        s.ps.wipeSettings(id);
+    }
+    s.ps.setActive(3);
+    for (const id of [1, 2]) {
+        await s.resolver.resolve({ id, file: "C:\art\t" + id + "b.psd", bounds: BOUNDS }, s.config, true);
+    }
+    assert.equal(s.ps.peek(1), undefined);
+    assert.equal(s.ps.peek(2), undefined);
+
+    // Document 2 comes to the front. Retrying from the same end of the queue
+    // every time would spend every attempt on document 1 and never reach it.
+    s.ps.setActive(2);
+    await s.resolver.flushPendingStamps();
+    await s.resolver.flushPendingStamps();
+    assert.ok(s.ps.peek(2), "the document in front is reached");
+});
+
+test("a stamp Photoshop refused is retried until it takes", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    s.ps.setActive(1);
+    const first = await s.resolver.resolve({ id: 1, file: "C:\art\f3.psd", bounds: BOUNDS }, s.config, true);
+    const sessionId = first.session.sessionId;
+
+    // Photoshop busy with a dialog: the write is refused outright.
+    s.ps.wipeSettings(1);
+    s.ps.setWritesFail(true);
+    const refused = await s.resolver.resolve(
+        { id: 1, file: "C:\art\f4.psd", bounds: BOUNDS },
+        s.config,
+        true
+    );
+    assert.equal(refused.session.sessionId, sessionId, "the recording is unaffected");
+    assert.equal(refused.session.restamped, false, "but nothing was written");
+    assert.equal(s.ps.peek(1), undefined);
+
+    s.ps.setWritesFail(false);
+    await s.resolver.flushPendingStamps();
+    assert.equal(s.ps.peek(1).sessionId, sessionId, "the queued write lands once Photoshop takes it");
+});
+
+test("a queued stamp for a document Photoshop has closed is dropped", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    s.ps.setActive(1);
+    await s.resolver.resolve({ id: 1, file: "C:\art\f5.psd", bounds: BOUNDS }, s.config, true);
+    s.ps.wipeSettings(1);
+    s.ps.setWritesFail(true);
+    await s.resolver.resolve({ id: 1, file: "C:\art\f6.psd", bounds: BOUNDS }, s.config, true);
+
+    // The artist closes the document rather than answering the dialog.
+    s.ps.close(1);
+    s.ps.setWritesFail(false);
+    await s.resolver.flushPendingStamps();
+    assert.equal(s.ps.peek(1), undefined, "nothing is written into a document that has gone");
+
+    // And the queue is empty rather than retrying it forever.
+    s.ps.open(1);
+    await s.resolver.flushPendingStamps();
+    assert.equal(s.ps.peek(1), undefined);
 });
 
 test("a session whose folder was deleted is not resurrected", async (t) => {
@@ -407,7 +452,7 @@ test("reopening the file a Save As branched from keeps the two drawings apart", 
     // Now the artist reopens a.psd to try the other path. It arrives holding
     // the same session id as the document already recording into it.
     s.ps.setActive(2);
-    await s.ps.gateway.setActiveDocumentSettings(stampedIntoTheFile);
+    s.ps.setSettings(2, stampedIntoTheFile);
     const branchA = await s.resolver.resolve(
         { id: 2, file: "C:\art\a.psd", bounds: BOUNDS },
         s.config,
@@ -445,7 +490,7 @@ test("a document Photoshop closed without telling us does not cost the recording
     // strength of that alone would be the very bug this module exists to stop.
     s.ps.close(1);
     s.ps.setActive(2);
-    await s.ps.gateway.setActiveDocumentSettings(s.ps.peek(1));
+    s.ps.carrySettings(1, 2);
 
     const again = await s.resolver.resolve(
         { id: 2, file: "C:\art\i.psd", bounds: BOUNDS },
@@ -544,8 +589,14 @@ test("a repair still reading the PSD when the fork happens does not put the old 
     const readAnswered = new Promise((resolve) => (answerRead = resolve));
     const gateway = s.ps.gateway;
     const read = gateway.getDocumentSettings.bind(gateway);
+    // Only the repair's own read is the slow one; the reads that verify a
+    // write are answered as normal, or the fork below could never finish.
+    let slow = true;
     gateway.getDocumentSettings = async (id) => {
-        await readAnswered;
+        if (slow) {
+            slow = false;
+            await readAnswered;
+        }
         return read(id);
     };
     const repair = s.resolver.repairAfterSave(1);
@@ -669,7 +720,7 @@ test("reopening the file a Save As left behind continues its own recording", asy
 
     // The artist reopens a.psd to take the drawing somewhere else.
     s.ps.setActive(2);
-    await s.ps.gateway.setActiveDocumentSettings(stampedIntoTheFile);
+    s.ps.setSettings(2, stampedIntoTheFile);
     const reopened = await s.resolver.resolve(
         { id: 2, file: "C:" + SEP + "art" + SEP + "a.psd", bounds: BOUNDS },
         s.config,
@@ -716,4 +767,199 @@ test("a Save As is a new name for a document whose old file is still there", (t)
     // second artwork to record separately.
     fs.rmSync(before);
     assert.equal(isSaveAsRename(before, after), false);
+});
+
+/* ------------------------------------------------- the repair after a save */
+
+// onSave calls this before the debounced resync gets there, so a capture
+// racing in between still resolves to the right session.
+
+test("a save that did not clear the id repairs nothing", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    s.ps.setActive(1);
+    const first = await s.resolver.resolve({ id: 1, file: "C:\\art\\r1.psd", bounds: BOUNDS }, s.config, true);
+
+    assert.equal(await s.resolver.repairAfterSave(1), false, "the PSD still holds it");
+    assert.equal(s.ps.peek(1).sessionId, first.session.sessionId);
+});
+
+test("a save that cleared the id puts it back at once", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    s.ps.setActive(1);
+    const first = await s.resolver.resolve({ id: 1, file: "C:\\art\\r2.psd", bounds: BOUNDS }, s.config, true);
+    s.ps.wipeSettings(1);
+
+    assert.equal(await s.resolver.repairAfterSave(1), true);
+    assert.equal(s.ps.peek(1).sessionId, first.session.sessionId, "back in the document");
+    assert.ok(s.logs.some((line) => /lost its session id \(Save As\); restamping/.test(line)));
+});
+
+test("a save on a document we have never recorded repairs nothing", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    s.ps.setActive(9);
+    assert.equal(await s.resolver.repairAfterSave(9), false);
+});
+
+/* ------------------------------------------------------------- odd shapes */
+
+test("a document with no bounds has no size and is offered no candidates", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    assert.deepEqual(canvasSize(null), { width: 0, height: 0 });
+
+    // Photoshop occasionally answers without bounds; a session still starts,
+    // and nothing can be matched to it by canvas size.
+    s.ps.setActive(1);
+    const outcome = await s.resolver.resolve({ id: 1, file: "Untitled-1", bounds: null }, s.config, true);
+    assert.ok(outcome.session);
+    assert.equal(outcome.session.manifest.canvasBounds, null);
+
+    s.ps.setActive(2);
+    const other = await s.resolver.resolve({ id: 2, file: "Untitled-2", bounds: null }, s.config, false);
+    assert.equal(other.session, null);
+    assert.deepEqual(other.candidates, [], "a canvas of no size matches nothing");
+});
+
+test("a folder whose manifest has gone is described again from what is on disk", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    s.ps.setActive(1);
+    const first = await s.resolver.resolve({ id: 1, file: "C:\\art\\m.psd", bounds: BOUNDS }, s.config, true);
+    writeFrames(s.config, first.session.sessionId, 4);
+    fs.rmSync(path.join(first.session.folder, "session.json"));
+
+    const again = await s.resolver.resolve({ id: 1, file: "C:\\art\\m.psd", bounds: BOUNDS }, s.config, true);
+    assert.equal(again.session.sessionId, first.session.sessionId, "the folder is still the recording");
+    assert.equal(again.session.manifest.frameCount, 4, "counted from the frames themselves");
+    assert.deepEqual(again.session.manifest.filePathHistory, ["C:\\art\\m.psd"]);
+});
+
+test("adopting a recording that has been deleted says so", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    s.ps.setActive(1);
+    await assert.rejects(
+        () => s.resolver.adopt({ id: 1, file: "C:\\art\\gone.psd", bounds: BOUNDS }, s.config, "no-such-session"),
+        /no longer exists/
+    );
+});
+
+test("a refusal that is not an Error is still reported", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    s.ps.setActive(1);
+    // Photoshop's own layers throw strings often enough to matter, and a log
+    // line reading "[object Object]" is how a diagnosis gets lost.
+    s.ps.gateway.setDocumentSettings = () => Promise.reject("Photoshop said no");
+
+    const outcome = await s.resolver.resolve({ id: 1, file: "C:\\art\\s.psd", bounds: BOUNDS }, s.config, true);
+    assert.ok(outcome.session, "the recording starts anyway");
+    assert.ok(
+        s.logs.some((line) => /Session id for document 1 could not be written: Photoshop said no/.test(line))
+    );
+});
+
+/* --------------------------------------------- what the evidence can look like */
+
+test("a path that is nothing but separators still names something", () => {
+    assert.equal(documentDisplayName(SEP + SEP), SEP + SEP);
+    assert.equal(documentDisplayName(""), "Untitled");
+    assert.equal(documentDisplayName("C:" + SEP + "art" + SEP + "dragon.psd"), "dragon");
+});
+
+test("a document whose settings come back empty is treated as unrecorded", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    // generator-core answers with null rather than throwing on some versions.
+    s.ps.gateway.getDocumentSettings = async () => null;
+
+    s.ps.setActive(1);
+    const outcome = await s.resolver.resolve({ id: 1, file: "Untitled-1", bounds: BOUNDS }, s.config, true);
+    assert.equal(outcome.session.isNew, true);
+});
+
+test("an id pointing at a folder that has gone loses to the file's own recording", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    s.ps.setActive(1);
+    const first = await s.resolver.resolve({ id: 1, file: "C:\\art\\d1.psd", bounds: BOUNDS }, s.config, true);
+    writeFrames(s.config, first.session.sessionId, 7);
+
+    // The PSD names a recording nobody has: deleted, or from another machine.
+    s.ps.setSettings(1, { sessionId: "2026-01-01-00-00-00-000-deadbeef" });
+
+    const again = await s.resolver.resolve({ id: 1, file: "C:\\art\\d1.psd", bounds: BOUNDS }, s.config, true);
+    assert.equal(again.session.sessionId, first.session.sessionId);
+    assert.equal(again.session.manifest.frameCount, 7);
+});
+
+test("an id pointing at a folder with no manifest loses to the file's own recording", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    s.ps.setActive(1);
+    const mine = await s.resolver.resolve({ id: 1, file: "C:\\art\\d2.psd", bounds: BOUNDS }, s.config, true);
+    writeFrames(s.config, mine.session.sessionId, 3);
+
+    s.ps.setActive(2);
+    const other = await s.resolver.resolve({ id: 2, file: "Untitled-9", bounds: BOUNDS }, s.config, true);
+    fs.rmSync(path.join(other.session.folder, "session.json"));
+    s.ps.close(2);
+
+    // Document 1 now carries an id whose folder is there but says nothing.
+    s.ps.setSettings(1, { sessionId: other.session.sessionId });
+    s.ps.setActive(1);
+
+    const again = await s.resolver.resolve({ id: 1, file: "C:\\art\\d2.psd", bounds: BOUNDS }, s.config, true);
+    assert.equal(again.session.sessionId, mine.session.sessionId, "the one that claims the file wins");
+    assert.equal(s.ps.peek(1).sessionId, mine.session.sessionId, "and the document is repaired");
+});
+
+test("a manifest written before file paths were recorded gains one", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    s.ps.setActive(1);
+    const first = await s.resolver.resolve({ id: 1, file: "C:\\art\\d3.psd", bounds: BOUNDS }, s.config, true);
+
+    // A 3.x-era manifest: no filePathHistory at all.
+    const manifestPath = path.join(first.session.folder, "session.json");
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    delete manifest.filePathHistory;
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+
+    const again = await s.resolver.resolve({ id: 1, file: "C:\\art\\d3.psd", bounds: BOUNDS }, s.config, true);
+    assert.deepEqual(again.session.manifest.filePathHistory, ["C:\\art\\d3.psd"]);
+});
+
+test("a recording deleted while its id was being written does not take the resolve down", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    s.ps.setActive(1);
+    const first = await s.resolver.resolve({ id: 1, file: "C:\\art\\d4.psd", bounds: BOUNDS }, s.config, true);
+    s.ps.wipeSettings(1);
+
+    // The artist deletes the take from the panel while the repair is in flight.
+    const write = s.ps.gateway.setDocumentSettings.bind(s.ps.gateway);
+    s.ps.gateway.setDocumentSettings = async (id, settings) => {
+        fs.rmSync(first.session.folder, { recursive: true, force: true });
+        return write(id, settings);
+    };
+
+    const again = await s.resolver.resolve({ id: 1, file: "C:\\art\\d4.psd", bounds: BOUNDS }, s.config, true);
+    assert.equal(again.session.sessionId, first.session.sessionId);
+    assert.equal(again.session.manifest.frameCount, 0, "an empty folder, not someone else's frames");
 });

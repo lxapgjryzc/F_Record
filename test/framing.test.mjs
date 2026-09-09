@@ -20,7 +20,7 @@ import {
     computeOutputRect,
     computePadding,
     pixmapExceedsOutputRect
-} from "../dist/test/framing.mjs";
+} from "../dist/modules/framing.mjs";
 
 const CANVAS = { top: 0, left: 0, right: 4000, bottom: 3000 };
 const CANVAS_OUT = computeOutputRect(CANVAS, "1080");

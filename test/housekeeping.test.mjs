@@ -10,16 +10,23 @@
  * run is not a test anyone wants.
  */
 
-import { test } from "node:test";
+import { mock, test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { deleteSessions, freeZipName, planPack, safeFileName } from "../dist/test/housekeeping.mjs";
-import { listSessions, writePointer } from "../dist/test/store.mjs";
-import { macTrashScript, windowsTrashScript } from "../dist/test/trash.mjs";
-import { zipMethodFor } from "../dist/test/zip.mjs";
-import { tempDir } from "./helpers.mjs";
+import { fsError, mockBuiltins, tempDir, withFault } from "./helpers.mjs";
+
+// Loaded through a swappable "fs" -- with no fault set it is the real one.
+// Only freeZipName's last resort needs it, and that resort cannot be reached
+// by creating ten thousand files.
+mockBuiltins(mock, "fs");
+const { deleteSessions, documentOf, freeZipName, planPack, safeFileName } = await import(
+    "../dist/modules/housekeeping.mjs"
+);
+const { listSessions, writePointer } = await import("../dist/modules/store.mjs");
+const { macTrashScript, windowsTrashScript } = await import("../dist/modules/trash.mjs");
+const { zipMethodFor } = await import("../dist/modules/zip.mjs");
 
 function writeSession(root, sessionId, options = {}) {
     const folder = path.join(root, sessionId);
@@ -342,4 +349,87 @@ test("the macOS script escapes quotes and asks the Finder, which is what puts th
         script,
         'tell application "Finder" to delete {POSIX file "/Users/a/say \\"hi\\".psd" as alias, POSIX file "/Users/a/b.psd" as alias}'
     );
+});
+
+test("packing a recording that has since been deleted says so by name", (t) => {
+    const temp = tempDir();
+    t.after(() => temp.cleanup());
+
+    // The panel's list can be a few seconds stale, and the button is still
+    // clickable in that gap. A named session is something the user can act on;
+    // a stack trace from deeper down is not.
+    assert.throws(
+        () => planPack(temp.dir, "20260101-gone", temp.dir),
+        /Session '20260101-gone' no longer exists/
+    );
+});
+
+test("a folder with no free zip name left is an error, not an overwrite", (t) => {
+    const temp = tempDir();
+    t.after(() => temp.cleanup());
+
+    // Every name taken, including the .part files: the search has to stop and
+    // say so rather than run for ever or write over somebody's archive.
+    withFault("statSync", () => ({ isDirectory: () => false }), () => {
+        assert.throws(() => freeZipName(temp.dir, "dragon"), /No free name for/);
+    });
+});
+
+test("a session summary with no file history simply belongs to no document", () => {
+    // A recording started on an unsaved canvas has never had a path. Reading
+    // one has to be a null, not a throw, because every delete asks first.
+    assert.equal(documentOf({ sessionId: "s", docName: "Untitled-1" }), null);
+    assert.equal(documentOf({ sessionId: "s", docName: "d", filePathHistory: [] }), null);
+});
+
+test("a bin that rejects with something that is not an Error still explains itself", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+    const a = s.psd("a.psd");
+    writeSession(s.root, "s-a", { docName: "a", filePaths: [a] });
+
+    // The bin runs in another process and its failure arrives through IPC, so
+    // what lands here is whatever it was serialised as -- often a bare string.
+    const outcome = await deleteSessions(
+        s.root,
+        [{ sessionId: "s-a", withDocument: true }],
+        listSessions(s.root),
+        () => Promise.reject("the shell is not available"),
+        allow
+    );
+
+    assert.deepEqual(outcome.deleted, [], "nothing was deleted while its document stayed");
+    assert.match(outcome.warnings[0], /could not be sent to the Recycle Bin \(the shell is not available\)/);
+});
+
+test("a recording with no manifest left is still packable, under its own id", (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    // session.json can be lost to a crash mid-write while the frames survive.
+    // Losing the name is acceptable; refusing to pack the frames is not.
+    const folder = writeSession(s.root, "20260101-abc123", { docName: "dragon" });
+    fs.unlinkSync(path.join(folder, "session.json"));
+
+    const plan = planPack(s.root, "20260101-abc123", s.temp.dir);
+
+    assert.equal(plan.document, null);
+    assert.equal(path.basename(plan.zip), "20260101-abc123.zip", "falls back to the session id");
+    assert.equal(plan.entries.length, 3);
+    assert.ok(plan.entries.every((e) => e.name.startsWith("20260101-abc123_frames/")));
+});
+
+test("a manifest that never recorded a path packs under the document's name", (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    const folder = writeSession(s.root, "s-unsaved", { docName: "Untitled-1" });
+    const manifest = JSON.parse(fs.readFileSync(path.join(folder, "session.json"), "utf8"));
+    delete manifest.filePathHistory;
+    fs.writeFileSync(path.join(folder, "session.json"), JSON.stringify(manifest));
+
+    const plan = planPack(s.root, "s-unsaved", s.temp.dir);
+
+    assert.equal(plan.document, null);
+    assert.equal(path.basename(plan.zip), "Untitled-1.zip");
 });

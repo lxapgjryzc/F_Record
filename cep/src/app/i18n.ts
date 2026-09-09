@@ -24,7 +24,11 @@ export type Translate = (key: string, ...args: Array<string | number>) => string
  * so a locale that is behind on a few strings degrades gracefully.
  */
 export function createTranslate(language: Language, hostLocale?: string | null): Translate {
-    const primary = dictionaries[resolveLocale(language, hostLocale)] || en;
+    // resolveLocale returns a Locale, which is by definition a key of
+    // dictionaries -- an unknown tag comes back as the fallback rather than as
+    // itself. English is still needed below, for a key this language is behind
+    // on.
+    const primary = dictionaries[resolveLocale(language, hostLocale)];
     return function (key: string, ...args: Array<string | number>): string {
         let text = primary[key];
         if (text === undefined) {

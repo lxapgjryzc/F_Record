@@ -26,10 +26,11 @@ import {
     readManifest,
     summarizeSession,
     writePointer
-} from "../dist/test/store.mjs";
-import { SessionResolver } from "../dist/test/session.mjs";
-import { MOVED_POINTER_SUFFIX, documentSideFolder, sessionPointerPath } from "../dist/test/paths.mjs";
-import { tempDir } from "./helpers.mjs";
+} from "../dist/modules/store.mjs";
+import { SessionResolver } from "../dist/modules/session.mjs";
+import { MOVED_POINTER_SUFFIX, documentSideFolder, sessionPointerPath } from "../dist/modules/paths.mjs";
+import { tempDir, withIsolatedAppDir } from "./helpers.mjs";
+import { makePhotoshop } from "./photoshop.mjs";
 
 const BOUNDS = { top: 0, left: 0, right: 2000, bottom: 1500 };
 
@@ -63,7 +64,10 @@ function writeSession(root, sessionId, options = {}) {
 }
 
 function setupRoot() {
-    const temp = tempDir();
+    // See the note in session.test.mjs.
+    const app = withIsolatedAppDir();
+    const folders = tempDir();
+    const temp = { dir: folders.dir, cleanup: () => { folders.cleanup(); app.cleanup(); } };
     const root = path.join(temp.dir, "processImages");
     fs.mkdirSync(root, { recursive: true });
     const art = path.join(temp.dir, "art");
@@ -239,42 +243,6 @@ test("moveFolder refuses to land on something that already exists", async (t) =>
 /* ---------------------------------------------------------------- resolver */
 
 /** Stand-in for Photoshop's generatorSettings storage, as in session.test.mjs. */
-function makePhotoshop() {
-    const stored = new Map();
-    const open = new Set();
-    let active = null;
-    return {
-        setActive(id) {
-            active = id;
-            open.add(id);
-        },
-        wipeSettings(id) {
-            stored.delete(id);
-        },
-        gateway: {
-            async getDocumentSettings(documentId) {
-                const value = stored.get(documentId);
-                if (value === undefined) {
-                    throw new Error("no generatorSettings");
-                }
-                return value;
-            },
-            async setActiveDocumentSettings(settings) {
-                if (active === null) {
-                    throw new Error("no active document");
-                }
-                stored.set(active, settings);
-            },
-            getActiveDocumentId() {
-                return active;
-            },
-            async isDocumentOpen(documentId) {
-                return open.has(documentId);
-            }
-        }
-    };
-}
-
 function setupResolver() {
     const s = setupRoot();
     const config = {

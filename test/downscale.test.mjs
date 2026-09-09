@@ -19,12 +19,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { createRequire } from "node:module";
 
 import { withIsolatedAppDir } from "./helpers.mjs";
+import { makeJsxEngine } from "./photoshop.mjs";
+import { init } from "../dist/modules/index.mjs";
 
-const require = createRequire(import.meta.url);
-const BUNDLE = path.resolve("dist/generator/com.f_know.f_record.generator/index.js");
 
 const CANVAS_WIDTH = 7513;
 const CANVAS_HEIGHT = 4617;
@@ -75,6 +74,14 @@ function makeDownscalingPhotoshop(behaviour) {
     const canvas = bounds(CANVAS_WIDTH, CANVAS_HEIGHT);
     const asked = [];
 
+    // Photoshop does the write by running a script, and it resolves the
+    // document reference itself; see test/photoshop.mjs.
+    const writeSettings = makeJsxEngine({
+        frontmost: () => 1,
+        isOpen: () => true,
+        write: (id, key, json) => settings.set(id, JSON.parse(json))
+    });
+
     const generator = {
         getDocumentInfo() {
             return Promise.resolve({ id: 1, file: "C:\\art\\L13.psd", bounds: canvas, resolution: 150 });
@@ -105,9 +112,8 @@ function makeDownscalingPhotoshop(behaviour) {
             }
             return Promise.resolve(settings.get(documentId));
         },
-        setDocumentSettingsForPlugin(value) {
-            settings.set(1, value);
-            return Promise.resolve();
+        evaluateJSXString(script) {
+            return Promise.resolve(writeSettings(script));
         },
         onPhotoshopEvent(event, listener) {
             if (!listeners.has(event)) {
@@ -151,10 +157,8 @@ async function startPlugin(behaviour) {
         })
     );
 
-    delete require.cache[BUNDLE];
-    const plugin = require(BUNDLE);
     const ps = makeDownscalingPhotoshop(behaviour);
-    const handle = plugin.init(ps.generator, {}, null);
+    const handle = init(ps.generator, {}, null);
     await handle.ready;
 
     return {

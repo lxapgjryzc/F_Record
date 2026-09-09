@@ -68,9 +68,17 @@ import { Bridge } from "./bridge";
 import { CoreLogger, Logger } from "./logger";
 import { computeOutputRect, computePadding, pixmapExceedsOutputRect } from "./framing";
 import { UpdateChecker } from "./update";
+import { createDocumentStamper } from "./stamp";
 
+/**
+ * Stamped in at build time from package.json, which is the single source of
+ * truth for the version -- the CEP manifest is stamped from the same place.
+ * Every bundle that carries this file defines it, including the one the tests
+ * import, so a build that forgot to would fail loudly on load rather than
+ * shipping a plug-in that reports the wrong version to the panel.
+ */
 declare const __PLUGIN_VERSION__: string;
-const PLUGIN_VERSION = typeof __PLUGIN_VERSION__ !== "undefined" ? __PLUGIN_VERSION__ : "0.0.0-dev";
+const PLUGIN_VERSION = __PLUGIN_VERSION__;
 
 const MENU_ID = "f-record-toggle";
 const RESYNC_DEBOUNCE_MS = 150;
@@ -122,7 +130,7 @@ interface GeneratorApi {
     getDocumentInfo(documentId?: number, flags?: object): Promise<any>;
     getDocumentPixmap(documentId: number, settings: object): Promise<any>;
     getDocumentSettingsForPlugin(documentId: number, pluginId: string): Promise<any>;
-    setDocumentSettingsForPlugin(settings: object, pluginId: string): Promise<any>;
+    evaluateJSXString(script: string, sharedEngineSafe?: boolean): unknown;
     savePixmap?(pixmap: any, filePath: string, settings: object): Promise<any>;
     onPhotoshopEvent(event: string, listener: (payload: any) => void): unknown;
     addMenuItem(name: string, displayName: string, enabled: boolean, checked: boolean): Promise<any>;
@@ -260,14 +268,12 @@ class FRecordPlugin {
         this.configStore = new ConfigStore();
         this.index = new SessionIndex(randomHex(8));
 
+        const stampDocument = createDocumentStamper(this.generator, PLUGIN_NAME);
         const gateway: PsGateway = {
             getDocumentSettings: (documentId: number) =>
                 Promise.resolve(this.generator.getDocumentSettingsForPlugin(documentId, PLUGIN_NAME)),
-            setActiveDocumentSettings: (settings: Record<string, unknown>) =>
-                Promise.resolve(this.generator.setDocumentSettingsForPlugin(settings, PLUGIN_NAME)).then(
-                    () => undefined
-                ),
-            getActiveDocumentId: () => this.activeDocumentId,
+            setDocumentSettings: (documentId: number, settings: Record<string, unknown>) =>
+                stampDocument(documentId, settings),
             // Asked only when two documents claim one session, so the cost of
             // a document-info call there is irrelevant -- and the expensive
             // flags are off here as everywhere else.
@@ -472,9 +478,7 @@ class FRecordPlugin {
         // rather than leaving it to the debounced resync below, so a capture
         // racing in between still resolves to the right session.
         if (this.activeDocumentId !== null) {
-            this.resolver.repairAfterSave(this.activeDocumentId).catch((e) => {
-                this.log.warn("Could not repair the session id after save: " + errText(e));
-            });
+            this.detach("warn", "Could not repair the session id after save", this.resolver.repairAfterSave(this.activeDocumentId));
         }
         this.needsResolve = true;
         this.scheduleResync();
@@ -486,8 +490,22 @@ class FRecordPlugin {
             return;
         }
         const config = this.configStore.get();
-        this.applyConfigPatch({ enabled: !config.enabled }).catch((e) => {
-            this.log.error("Menu toggle failed: " + errText(e));
+        this.detach("error", "Menu toggle failed", this.applyConfigPatch({ enabled: !config.enabled }));
+    }
+
+    /**
+     * Starts work nothing waits for, with a rejection that goes to the log
+     * rather than into the process.
+     *
+     * Four things here are deliberately not awaited -- restamping after a
+     * save, the menu's own toggle, the debounced resync, and a batch of zips
+     * -- because the caller is an event handler or a command that has to
+     * answer now. An unhandled rejection out of any of them takes the whole
+     * generator down on some of the Node versions Photoshop ships.
+     */
+    private detach(level: "warn" | "error", what: string, work: Promise<unknown>): void {
+        work.catch((e) => {
+            this.log.log(level, what + ": " + errText(e));
         });
     }
 
@@ -522,9 +540,7 @@ class FRecordPlugin {
         }
         this.resyncTimer = setTimeout(() => {
             this.resyncTimer = null;
-            this.syncActiveDocument().catch((e) => {
-                this.log.error("Document sync failed: " + errText(e));
-            });
+            this.detach("error", "Document sync failed", this.syncActiveDocument());
         }, RESYNC_DEBOUNCE_MS);
     }
 
@@ -694,19 +710,23 @@ class FRecordPlugin {
         // The same document arriving under a different name, with the old
         // file still on disk, is a Save As -- and a Save As means there are
         // now two artworks where there was one.
+        // What the fork and the resolve need is handed to them rather than read
+        // back off the plugin: `info.id` is the document this answer is about,
+        // and `this.current` has just been checked -- re-deriving either inside
+        // would be reading state that the awaits below can change.
         const forked =
             info.id === wasDocumentId &&
             this.current !== null &&
             this.resolvedForDocId === info.id &&
             isSaveAsRename(wasFile, this.docFile)
-                ? await this.forkForSaveAs(config)
+                ? await this.forkForSaveAs(config, info.id, this.current)
                 : false;
         if (this.leftBehind(askedFor)) {
             return;
         }
 
         if (!forked && (this.needsResolve || this.resolvedForDocId !== info.id || this.current === null)) {
-            await this.resolveSession(config);
+            await this.resolveSession(config, info.id);
             if (this.leftBehind(askedFor)) {
                 return;
             }
@@ -796,13 +816,7 @@ class FRecordPlugin {
      * next time the old one is opened -- a worse outcome than forking, but not
      * a broken one, and better than dropping the recording on the floor.
      */
-    private async forkForSaveAs(config: Config): Promise<boolean> {
-        const from = this.current;
-        const documentId = this.activeDocumentId;
-        if (!from || documentId === null) {
-            return false;
-        }
-
+    private async forkForSaveAs(config: Config, documentId: number, from: ResolvedSession): Promise<boolean> {
         this.flushManifest();
         this.current = null;
         this.scheduler.discardPending();
@@ -820,16 +834,13 @@ class FRecordPlugin {
         this.resolvedForDocId = documentId;
         this.needsResolve = false;
         this.loggedGeometryFor = null;
-        this.lastFrameAt = this.current.manifest.lastModifiedAt || null;
+        // Freshly stamped by the fork, so there is nothing to fall back to.
+        this.lastFrameAt = this.current.manifest.lastModifiedAt;
         this.resumeCandidates = [];
         return true;
     }
 
-    private async resolveSession(config: Config): Promise<void> {
-        const documentId = this.activeDocumentId;
-        if (documentId === null) {
-            return;
-        }
+    private async resolveSession(config: Config, documentId: number): Promise<void> {
         // The resolver rebuilds the manifest from disk. Write the live one
         // first, or resolving straight back to the session already being
         // recorded -- a plain save does exactly that -- would hand back
@@ -1035,10 +1046,8 @@ class FRecordPlugin {
                 }
             }
 
-            // Retries any session id that could not be written because its
-            // document was not frontmost at the time. One at a time: a write
-            // Photoshop is sitting on must not be joined by another every
-            // second, to be executed as a batch when it finally wakes up.
+            // Retries a session id Photoshop would not take -- busy with a
+            // dialog, or mid-save. The rate limit is in flushPendingStamps.
             if (!this.stampFlushInFlight) {
                 this.stampFlushInFlight = true;
                 const done = () => {
@@ -1166,9 +1175,10 @@ class FRecordPlugin {
             // it. Switching it on checks once now rather than waiting a day.
             this.updates.forget();
             if (after.checkForUpdates) {
-                this.updates.check().catch(() => {
-                    /* check() never rejects */
-                });
+                // check() reports its own failures and resolves either way;
+                // detach is here so that a future one cannot become an
+                // unhandled rejection instead.
+                this.detach("warn", "Update check did not complete", this.updates.check());
             }
         }
 
@@ -1334,9 +1344,7 @@ class FRecordPlugin {
                 "Packing " + accepted.length + " session(s) into '" + folder + "'" +
                     (deleteAfter ? ", deleting each once its zip is written" : "")
             );
-            this.runPack(config, accepted, folder, deleteAfter).catch((e) => {
-                this.log.error("Packing stopped: " + errText(e));
-            });
+            this.detach("error", "Packing stopped", this.runPack(config, accepted, folder, deleteAfter));
         }
         return { ok: true, sessions: sessions, warnings: warnings };
     }
@@ -1439,7 +1447,11 @@ class FRecordPlugin {
             to = sessionFolder(root, sessionId);
         } else {
             const manifest = readManifest(from);
-            const documentPath = newestExistingPath(manifest ? manifest.filePathHistory || [] : []);
+            // A 4.0 manifest has no filePathHistory, and a folder whose
+            // session.json was lost to a crash has no manifest at all. Both
+            // mean the same thing here: nothing says where to carry it to.
+            const history = manifest && manifest.filePathHistory ? manifest.filePathHistory : [];
+            const documentPath = newestExistingPath(history);
             if (!documentPath) {
                 return { ok: false, error: "The document this recording belongs to is not on disk" };
             }

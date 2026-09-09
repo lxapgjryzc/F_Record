@@ -45,6 +45,7 @@ export type CommandHandler = (command: Command) => Promise<CommandResult>;
 export class Bridge {
     private server: http.Server | null = null;
     private clients: http.ServerResponse[] = [];
+    private sockets: any[] = [];
     private heartbeat: any = null;
     private readonly token: string;
     private port = 0;
@@ -65,6 +66,15 @@ export class Bridge {
             });
             server.on("error", (err) => {
                 reject(err);
+            });
+            // Kept so stop() can let go of them; see there for why.
+            server.on("connection", (socket: any) => {
+                this.sockets.push(socket);
+                socket.on("close", () => {
+                    this.sockets = this.sockets.filter(function (open) {
+                        return open !== socket;
+                    });
+                });
             });
             // Port 0 lets the OS pick a free port; the panel discovers it via
             // bridge.json rather than us guessing a fixed one.
@@ -99,6 +109,21 @@ export class Bridge {
                 }
             }
             this.clients = [];
+            // server.close() waits for every open connection to end on its
+            // own, and there is always at least one: a panel holding its event
+            // stream, a keep-alive socket the panel's http agent is reusing, or
+            // a request that died mid-body. Waiting for those would mean
+            // Photoshop waiting for us, so they go with us. Nothing is owed to
+            // them -- stop() is only ever called because the plug-in is gone.
+            const sockets = this.sockets;
+            this.sockets = [];
+            for (let i = 0; i < sockets.length; i++) {
+                try {
+                    sockets[i].destroy();
+                } catch (e) {
+                    /* already gone */
+                }
+            }
             this.unpublish();
             if (!this.server) {
                 resolve();

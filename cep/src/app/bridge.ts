@@ -25,10 +25,8 @@ import {
 } from "../../../shared/protocol";
 import { bridgePath } from "../../../shared/paths";
 
-declare const require: (id: string) => any;
-
-const http = require("http");
-const fs = require("fs");
+import * as fs from "fs";
+import * as http from "http";
 
 const RETRY_MIN_MS = 1000;
 const RETRY_MAX_MS = 10000;
@@ -87,7 +85,7 @@ export class BridgeClient {
                     port: info.port,
                     path: "/command",
                     method: "POST",
-                    headers: this.headers({
+                    headers: this.headers(info, {
                         "Content-Type": "application/json",
                         "Content-Length": Buffer.byteLength(body)
                     })
@@ -119,9 +117,19 @@ export class BridgeClient {
         });
     }
 
-    private headers(extra?: Record<string, string | number>): Record<string, string | number> {
+    /**
+     * The two headers every request carries.
+     *
+     * `info` is passed in rather than read back off the client: both callers
+     * have just established which generator they are talking to, and re-reading
+     * it here would be reading a field the next reconnect can change.
+     */
+    private headers(
+        info: BridgeInfo,
+        extra?: Record<string, string | number>
+    ): Record<string, string | number> {
         const base: Record<string, string | number> = {
-            Authorization: "Bearer " + (this.info ? this.info.token : ""),
+            Authorization: "Bearer " + info.token,
             // The generator rejects anything carrying an Origin header, so a
             // web page cannot reach it even if it guesses the port; this header
             // is how our Node client identifies itself instead.
@@ -190,7 +198,7 @@ export class BridgeClient {
                 port: info.port,
                 path: "/events",
                 method: "GET",
-                headers: this.headers({ Accept: "text/event-stream" })
+                headers: this.headers(info, { Accept: "text/event-stream" })
             },
             (response: any) => {
                 if (response.statusCode !== 200) {

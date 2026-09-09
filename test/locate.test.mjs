@@ -17,7 +17,7 @@ import {
     ffmpegExeName,
     FFMPEG_ENV_VAR,
     FONT_ENV_VAR
-} from "../dist/test/locate.mjs";
+} from "../dist/modules/locate.mjs";
 
 /** Windows paths, written with forward slashes so the source stays readable. */
 const w = (s) => s.split("/").join(String.fromCharCode(92));
@@ -152,4 +152,42 @@ test("posix hosts get posix font paths", () => {
     const list = fontCandidates({ platform: "darwin", extensionDir: "/ext", env: {} });
     assert.equal(list[0], "/System/Library/Fonts/PingFang.ttc");
     assert.ok(list.every((p) => p.indexOf(String.fromCharCode(92)) === -1));
+});
+
+test("an extension directory we were not told about is skipped, not turned into a bare separator", () => {
+    // CEP does not always report one. Joining an empty first part would give
+    // "\ffmpeg\ffmpeg.exe", an absolute path on the wrong drive.
+    const list = ffmpegCandidates({ platform: "win32", extensionDir: "", env: {} });
+    assert.equal(list[0], "ffmpeg" + String.fromCharCode(92) + "ffmpeg.exe");
+    assert.ok(list.every((p) => p[0] !== String.fromCharCode(92)));
+});
+
+test("no environment at all still yields a list rather than throwing", () => {
+    // The panel builds this list to put in an error message; a context with
+    // nothing in it is exactly the situation that message is for.
+    const list = ffmpegCandidates({ platform: "win32", extensionDir: "C:" });
+    assert.ok(list.length > 0);
+    assert.deepEqual(fontCandidates({ platform: "darwin", extensionDir: "/ext" })[0],
+        "/System/Library/Fonts/PingFang.ttc");
+});
+
+test("the well-known Windows install root is a real path, not an escape sequence", () => {
+    // "C:\ffmpeg\bin" written with single backslashes compiles to a form feed
+    // and a backspace, and the candidate can then never match anything.
+    const list = ffmpegCandidates({ platform: "win32", extensionDir: "C:" + w("/ext"), env: {} });
+    assert.ok(list.includes(w("C:/ffmpeg/bin/ffmpeg.exe")), list.join(" | "));
+    assert.ok(
+        list.every((p) => !/[\x00-\x1f]/.test(p)),
+        "no control characters anywhere in the list"
+    );
+});
+
+test("a font override that names a font we would have tried anyway is listed once", () => {
+    const env = { WINDIR: w("C:/Windows") };
+    env[FONT_ENV_VAR] = w("C:/WINDOWS/FONTS/ARIAL.TTF");
+    const list = fontCandidates({ platform: "win32", extensionDir: EXT_DIR, env: env });
+
+    const arial = list.filter((p) => p.toLowerCase().endsWith("arial.ttf"));
+    assert.equal(arial.length, 1, "one entry, in the position the override earned it");
+    assert.equal(list[0], env[FONT_ENV_VAR], "and it is still first");
 });

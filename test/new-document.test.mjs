@@ -19,12 +19,11 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as http from "node:http";
-import { createRequire } from "node:module";
 
 import { withIsolatedAppDir, tempDir } from "./helpers.mjs";
+import { makeJsxEngine } from "./photoshop.mjs";
+import { init } from "../dist/modules/index.mjs";
 
-const require = createRequire(import.meta.url);
-const BUNDLE = path.resolve("dist/generator/com.f_know.f_record.generator/index.js");
 
 function bounds(width, height) {
     return { top: 0, left: 0, right: width, bottom: height };
@@ -83,6 +82,14 @@ function makeMultiDocumentPhotoshop() {
         };
     };
 
+    // Photoshop does the write by running a script, and it resolves the
+    // document reference itself; see test/photoshop.mjs.
+    const writeSettings = makeJsxEngine({
+        frontmost: () => active,
+        isOpen: (id) => docs.has(id),
+        write: (id, key, json) => settings.set(id, JSON.parse(json))
+    });
+
     const generator = {
         getDocumentInfo(documentId) {
             calls.documentInfo.push(documentId);
@@ -108,10 +115,8 @@ function makeMultiDocumentPhotoshop() {
                 return settings.get(documentId);
             });
         },
-        setDocumentSettingsForPlugin(value) {
-            return gated(settingsGate, () => {
-                settings.set(active, value);
-            });
+        evaluateJSXString(script) {
+            return gated(settingsGate, () => writeSettings(script));
         },
         onPhotoshopEvent(event, listener) {
             if (!listeners.has(event)) {
@@ -220,11 +225,9 @@ async function startPlugin() {
         JSON.stringify({ enabled: true, minIntervalMs: 100, autoStartNewDocuments: true })
     );
 
-    delete require.cache[BUNDLE];
-    const plugin = require(BUNDLE);
     const ps = makeMultiDocumentPhotoshop();
     ps.newDocument(1, "Untitled-1", bounds(1600, 1200));
-    const handle = plugin.init(ps.generator, {}, null);
+    const handle = init(ps.generator, {}, null);
     await handle.ready;
 
     const bridgeFile = path.join(appDir, "bridge.json");

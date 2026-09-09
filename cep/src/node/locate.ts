@@ -73,7 +73,7 @@ export function fontCandidates(ctx: LocateContext): string[] {
     const env = ctx.env || {};
     const out: string[] = [];
 
-    const add = (candidate: string): void => {
+    const add = (candidate: string | undefined): void => {
         if (!candidate) {
             return;
         }
@@ -85,10 +85,8 @@ export function fontCandidates(ctx: LocateContext): string[] {
         out.push(candidate);
     };
 
-    const override = env[FONT_ENV_VAR];
-    if (override) {
-        add(override);
-    }
+    // add() drops an unset one, so there is nothing to check first.
+    add(env[FONT_ENV_VAR]);
 
     if (platform === "win32") {
         const fonts = join(platform, env.WINDIR || "C:\\Windows", "Fonts");
@@ -137,7 +135,7 @@ export function ffmpegCandidates(ctx: LocateContext): string[] {
     const env = ctx.env || {};
     const out: string[] = [];
 
-    const add = (candidate: string): void => {
+    const add = (candidate: string | undefined): void => {
         if (!candidate) {
             return;
         }
@@ -149,11 +147,8 @@ export function ffmpegCandidates(ctx: LocateContext): string[] {
         out.push(candidate);
     };
 
-    // 1. An explicit override always wins.
-    const override = env[FFMPEG_ENV_VAR];
-    if (override) {
-        add(override);
-    }
+    // 1. An explicit override always wins. add() drops an unset one.
+    add(env[FFMPEG_ENV_VAR]);
 
     // 2. A copy inside the extension: how 4.0.0 shipped, still honoured so an
     //    upgrade over an existing install keeps working without a download.
@@ -191,7 +186,7 @@ export function ffmpegCandidates(ctx: LocateContext): string[] {
         if (env.ProgramFiles) {
             roots.push(join(platform, env.ProgramFiles, "ffmpeg", "bin"));
         }
-        roots.push("C:\ffmpeg\bin");
+        roots.push("C:\\ffmpeg\\bin");
         for (let i = 0; i < roots.length; i++) {
             add(join(platform, roots[i], exe));
         }

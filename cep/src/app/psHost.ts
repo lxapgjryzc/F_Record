@@ -6,11 +6,10 @@
  * serves Photoshop 2020 through 2026.
  */
 
-declare const require: (id: string) => any;
+import * as childProcess from "child_process";
+
 declare const CSInterface: any;
 declare const CSEvent: any;
-
-const childProcess = require("child_process");
 
 let cs: any = null;
 

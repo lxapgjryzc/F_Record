@@ -15,7 +15,7 @@ import {
     dictionaries,
     matchHostLocale,
     resolveLocale
-} from "../dist/test/locales.mjs";
+} from "../dist/modules/locales.mjs";
 
 /** English is the source of truth every other locale is checked against. */
 const en = dictionaries.en;

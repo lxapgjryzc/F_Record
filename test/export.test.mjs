@@ -31,7 +31,7 @@ import {
     DEFAULT_FPS,
     INTRO_SECONDS,
     OUTRO_SECONDS
-} from "../dist/test/exportPlan.mjs";
+} from "../dist/modules/exportPlan.mjs";
 
 function frames(count) {
     const out = [];
@@ -528,12 +528,57 @@ test("a JPEG's frame header gives up its size, whatever precedes it", () => {
 test("anything that is not a measurable JPEG says so rather than guessing", () => {
     assert.equal(jpegSize(Buffer.from([0x89, 0x50, 0x4e, 0x47])), null, "a PNG");
     assert.equal(jpegSize(Buffer.from([])), null);
+    assert.equal(jpegSize(null), null, "nothing read at all");
     // Truncated mid-header: SOI, then a frame marker whose payload never arrives.
     assert.equal(jpegSize(Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08])), null);
     // A DHT is in the SOF range but carries no dimensions; it must be skipped,
     // not read as a frame header.
     const dhtOnly = Buffer.from([0xff, 0xd8, 0xff, 0xc4, 0x00, 0x04, 0x00, 0x00, 0xff, 0xda]);
     assert.equal(jpegSize(dhtOnly), null);
+});
+
+test("the scan steps over padding, fill bytes and standalone markers", () => {
+    // Everything before the frame header that a real encoder is allowed to
+    // emit: a stray byte, 0xff used as fill, a restart marker and a bare 0x01.
+    // Each has its own way of not being a segment, and reading any of them as
+    // one would walk the offset into the middle of the entropy-coded data.
+    const jpeg = Buffer.from([
+        0xff, 0xd8,
+        0x00, // not a marker at all
+        0xff, 0xff, // fill before the next marker
+        0xff, 0xd0, // RST0: stands alone
+        0xff, 0x01, // TEM: stands alone
+        0xff, 0xc1, 0x00, 0x11, 0x08, 0x00, 0x64, 0x00, 0xc8, 0x03
+    ]);
+    assert.deepEqual(jpegSize(jpeg), { width: 200, height: 100 });
+});
+
+test("entropy-coded data means the header is behind us and was not found", () => {
+    // SOS with no frame header before it: the rest of the file is compressed
+    // scan data, so there is nothing left to measure and guessing would be
+    // worse than admitting it.
+    const sos = Buffer.from([0xff, 0xd8, 0xff, 0xda, 0x00, 0x0c, 0x03, 0x01, 0x00, 0x02]);
+    assert.equal(jpegSize(sos), null);
+
+    const eoi = Buffer.from([0xff, 0xd8, 0xff, 0xd9, 0x00, 0x00, 0x00, 0x00]);
+    assert.equal(jpegSize(eoi), null);
+});
+
+test("a segment that claims an impossible length is not walked off the end of", () => {
+    // The length word counts itself, so anything under 2 is corrupt. Trusting
+    // it would move the offset backwards and spin.
+    const corrupt = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]);
+    assert.equal(jpegSize(corrupt), null);
+});
+
+test("a frame header with no picture in it is not a size", () => {
+    // 0x0000 in either field: a file that says it is zero pixels wide cannot
+    // be scaled, and returning {width: 0} would divide by it downstream.
+    const zeroWide = Buffer.from([
+        0xff, 0xd8,
+        0xff, 0xc0, 0x00, 0x11, 0x08, 0x00, 0x64, 0x00, 0x00, 0x03
+    ]);
+    assert.equal(jpegSize(zeroWide), null);
 });
 
 test("filter values are escaped, so a path with a drive letter or a quote survives", () => {

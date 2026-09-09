@@ -7,12 +7,18 @@
  * against Node 6-era APIs.
  */
 
-import { test } from "node:test";
+import { mock, test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 
-import {
+import { asPlatform, fsError, mockBuiltins, tempDir, withEnv, withFault } from "./helpers.mjs";
+
+// Imported through a swappable `fs` so the "the disk refused" paths below can
+// be reached at all; with no fault set it is the real filesystem.
+mockBuiltins(mock, "fs");
+const {
     exists,
     isDirectory,
     mkdirp,
@@ -26,10 +32,10 @@ import {
     randomHex,
     nodeVersionInfo,
     describeNodeCompat,
-    duplicateFile
-} from "../dist/test/compat.mjs";
-import { frameFileName, parseFrameFileName, parseFrameList, parseLegacyFrameFileName } from "../dist/test/paths.mjs";
-import { tempDir } from "./helpers.mjs";
+    duplicateFile,
+    copyFile,
+    getUserDataDir
+} = await import("../dist/modules/compat.mjs");
 
 test("mkdirp creates nested directories and is idempotent", (t) => {
     const temp = tempDir();
@@ -56,6 +62,22 @@ test("rmrf removes a populated tree and tolerates a missing one", (t) => {
 
     rmrf(tree); // already gone: still must not throw
     rmrf(path.join(temp.dir, "never-existed"));
+});
+
+test("exists and isDirectory answer for a path that is not there", (t) => {
+    const temp = tempDir();
+    t.after(() => temp.cleanup());
+    const missing = path.join(temp.dir, "gone");
+
+    // Both are used as guards all over the plug-in, on paths the user may have
+    // deleted from under it. Neither may throw; "no" is the answer.
+    assert.equal(exists(missing), false);
+    assert.equal(isDirectory(missing), false);
+
+    const file = path.join(temp.dir, "session.json");
+    fs.writeFileSync(file, "{}");
+    assert.equal(exists(file), true);
+    assert.equal(isDirectory(file), false, "a file is not a folder");
 });
 
 test("rmrf deletes a plain file too", (t) => {
@@ -138,51 +160,6 @@ test("randomHex returns the requested number of bytes", () => {
     assert.match(randomHex(8), /^[0-9a-f]{16}$/);
 });
 
-/* ------------------------------------------------------------ frame names */
-
-test("frame names round-trip and sort by sequence", () => {
-    const name = frameFileName(42, 1700000000123);
-    assert.equal(name, "000042_1700000000123.jpg");
-
-    const parsed = parseFrameFileName(name);
-    assert.deepEqual(parsed, { seq: 42, timestampMs: 1700000000123, fileName: name });
-});
-
-test("frame parsing rejects anything that is not one of ours", () => {
-    assert.equal(parseFrameFileName("session.json"), null);
-    assert.equal(parseFrameFileName("000042.jpg"), null, "3.x naming is handled separately");
-    assert.equal(parseFrameFileName("000042_123.jpg"), null, "too short to be an epoch timestamp");
-    assert.equal(parseFrameFileName("000042_1700000000123.jpg.part"), null, "half-written frame");
-    assert.equal(parseFrameFileName("notes.txt"), null);
-});
-
-test("parseFrameList orders by sequence, not by string, and drops strangers", () => {
-    const frames = parseFrameList([
-        "000010_1700000010000.jpg",
-        "session.json",
-        "000002_1700000002000.jpg",
-        "000001_1700000001000.jpg",
-        "random.png"
-    ]);
-    assert.deepEqual(frames.map((f) => f.seq), [1, 2, 10]);
-});
-
-test("sequence numbers past 999999 still sort correctly by number", () => {
-    // Lexical order would put 1000000 before 999999; parseFrameList sorts on
-    // the parsed integer, so a very long recording stays in order.
-    const frames = parseFrameList(["1000000_1700000002000.jpg", "999999_1700000001000.jpg"]);
-    assert.deepEqual(frames.map((f) => f.seq), [999999, 1000000]);
-});
-
-test("legacy 3.x frame names are still recognised so old recordings export", () => {
-    assert.deepEqual(parseLegacyFrameFileName("000123.jpg"), {
-        seq: 123,
-        timestampMs: 0,
-        fileName: "000123.jpg"
-    });
-    assert.equal(parseLegacyFrameFileName("000123_1700000000000.jpg"), null);
-});
-
 test("describeNodeCompat names the Node and the fallbacks it forces", () => {
     const text = describeNodeCompat();
 
@@ -252,4 +229,123 @@ test("duplicateFile reports a real copy when it cannot link", (t) => {
 
     assert.equal(duplicateFile(source, dest), "copy");
     assert.equal(fs.readFileSync(dest, "utf8"), "frame");
+});
+
+test("copyFile always moves bytes, even where a link would have worked", (t) => {
+    const temp = tempDir();
+    t.after(() => temp.cleanup());
+    const source = path.join(temp.dir, "frame.jpg");
+    const dest = path.join(temp.dir, "moved.jpg");
+    fs.writeFileSync(source, "frame");
+
+    copyFile(source, dest);
+
+    assert.equal(fs.readFileSync(dest, "utf8"), "frame");
+    // A move across drives has to be a real copy: the destination must not
+    // share an inode with a source that is about to be deleted.
+    fs.rmSync(source);
+    assert.equal(fs.readFileSync(dest, "utf8"), "frame");
+});
+
+test("timeStampString with no argument stamps now", () => {
+    const before = Date.now();
+    const stamp = timeStampString();
+    assert.match(stamp, /^\d{4}(-\d{2}){5}-\d{3}$/);
+    assert.equal(new Date(before).getFullYear(), Number(stamp.slice(0, 4)));
+});
+
+test("randomHex pads a byte below 16 rather than emitting a single digit", () => {
+    // Two hex digits per byte is what makes the length predictable; a byte of
+    // 0 emitting "0" would quietly shorten every id it appears in.
+    const real = Math.random;
+    const queue = [0, 0.999, 0.05, 0.5];
+    Math.random = () => queue.shift();
+    try {
+        assert.equal(randomHex(4), "00ff0c80");
+    } finally {
+        Math.random = real;
+    }
+});
+
+/* ------------------------------------------------------- the data directory */
+
+test("getUserDataDir follows APPDATA on Windows and falls back to the profile", () => {
+    asPlatform("win32", () => {
+        withEnv({ APPDATA: "D:\\roaming" }, () => {
+            assert.equal(getUserDataDir(), "D:\\roaming");
+        });
+        withEnv({ APPDATA: undefined }, () => {
+            // A Photoshop launched by a service or a scheduled task can come
+            // up without APPDATA; guessing beats throwing at import time.
+            assert.equal(getUserDataDir(), path.join(os.homedir(), "AppData", "Roaming"));
+        });
+    });
+});
+
+test("getUserDataDir uses Application Support off Windows", () => {
+    asPlatform("darwin", () => {
+        assert.equal(getUserDataDir(), path.join(os.homedir(), "Library", "Application Support"));
+    });
+});
+
+/* ------------------------------------------------ writeFileAtomic's failures */
+
+test("writeFileAtomic skips the Windows unlink dance elsewhere", (t) => {
+    const temp = tempDir();
+    t.after(() => temp.cleanup());
+    const target = path.join(temp.dir, "config.json");
+
+    fs.writeFileSync(target, "old");
+    // renameSync overwrites in place on POSIX, so removing the destination
+    // first would only widen the window where the file is missing entirely.
+    asPlatform("linux", () => writeFileAtomic(target, "new"));
+    assert.equal(fs.readFileSync(target, "utf8"), "new");
+    assert.deepEqual(fs.readdirSync(temp.dir), ["config.json"]);
+});
+
+test("a failed write takes its temp file with it and reports the real error", (t) => {
+    const temp = tempDir();
+    t.after(() => temp.cleanup());
+
+    // A directory in the way is the shape of the real failure: Photoshop's own
+    // save has taken the name, or a sync client has put a folder there.
+    const target = path.join(temp.dir, "config.json");
+    fs.mkdirSync(target);
+    fs.writeFileSync(path.join(target, "keep.txt"), "x");
+
+    assert.throws(() => writeFileAtomic(target, "new"));
+    assert.deepEqual(
+        fs.readdirSync(temp.dir),
+        ["config.json"],
+        "no .tmp- file survives the failure"
+    );
+});
+
+test("the temp file being unremovable does not hide why the write failed", (t) => {
+    const temp = tempDir();
+    t.after(() => temp.cleanup());
+    const target = path.join(temp.dir, "config.json");
+
+    // Two failures in a row: the one worth reporting is the rename, not the
+    // best-effort cleanup that could not tidy up after it.
+    withFault("renameSync", fsError("EPERM", "rename refused"), () => {
+        withFault("unlinkSync", fsError("EBUSY", "and the temp file is held open too"), () => {
+            assert.throws(() => writeFileAtomic(target, "new"), /rename refused/);
+        });
+    });
+});
+
+test("a Windows unlink that fails still lets the rename try", (t) => {
+    const temp = tempDir();
+    t.after(() => temp.cleanup());
+    const target = path.join(temp.dir, "config.json");
+    fs.writeFileSync(target, "old");
+
+    // Removing the old file first is a workaround for renameSync throwing on
+    // Windows, not a precondition; when it cannot be done the rename is still
+    // the thing that decides, and it may well succeed.
+    withFault("unlinkSync", fsError("EBUSY", "another process has it open"), () => {
+        asPlatform("win32", () => writeFileAtomic(target, "new"));
+    });
+    assert.equal(fs.readFileSync(target, "utf8"), "new");
 });

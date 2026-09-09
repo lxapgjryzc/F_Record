@@ -11,7 +11,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { normalizeConfig } from "../dist/test/store.mjs";
+import { normalizeConfig } from "../dist/modules/store.mjs";
 import {
     DEFAULT_CONFIG,
     DEFAULT_EXPORT_DEFAULTS,
@@ -19,7 +19,7 @@ import {
     normalizeExportDefaults,
     normalizeWatermark,
     watermarkDraws
-} from "../dist/test/protocol.mjs";
+} from "../dist/modules/protocol.mjs";
 
 /** A stored 4.0 config, before any of the 4.1 fields existed. */
 function legacyConfig(overrides) {
