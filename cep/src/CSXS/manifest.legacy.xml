@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Panel manifest for Photoshop 2020 only (21.x = CEP 9, Chromium 61, Node 8.6).
+  Paired with the 'legacy' bundle, which is compiled down to that baseline.
+  Photoshop 2021+ gets manifest.modern.xml; scripts/install.ps1 picks the right
+  one per installation.
+-->
+<ExtensionManifest Version="5.0" ExtensionBundleId="com.F_know.F_Record" ExtensionBundleVersion="4.0.0" ExtensionBundleName="F_Record" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <ExtensionList>
+        <Extension Id="com.F_know.F_Record.panel" Version="4.0.0"/>
+    </ExtensionList>
+    <ExecutionEnvironment>
+        <HostList>
+            <!-- Photoshop 2020 (21.x) only -->
+            <Host Name="PHXS" Version="[21.0,21.9]"/>
+            <Host Name="PHSP" Version="[21.0,21.9]"/>
+        </HostList>
+        <LocaleList>
+            <Locale Code="All"/>
+        </LocaleList>
+        <RequiredRuntimeList>
+            <RequiredRuntime Name="CSXS" Version="9.0"/>
+        </RequiredRuntimeList>
+    </ExecutionEnvironment>
+    <DispatchInfoList>
+        <Extension Id="com.F_know.F_Record.panel">
+            <DispatchInfo>
+                <Resources>
+                    <MainPath>./index.html</MainPath>
+                    <ScriptPath>./host/init.jsx</ScriptPath>
+                    <CEFCommandLine>
+                        <Parameter>--enable-nodejs</Parameter>
+                        <Parameter>--mixed-context</Parameter>
+                    </CEFCommandLine>
+                </Resources>
+                <Lifecycle>
+                    <AutoVisible>true</AutoVisible>
+                </Lifecycle>
+                <UI>
+                    <Type>Panel</Type>
+                    <Menu>F_Record</Menu>
+                    <Geometry>
+                        <Size>
+                            <Width>340</Width>
+                            <Height>460</Height>
+                        </Size>
+                        <MinSize>
+                            <Width>300</Width>
+                            <Height>320</Height>
+                        </MinSize>
+                        <MaxSize>
+                            <Width>900</Width>
+                            <Height>1400</Height>
+                        </MaxSize>
+                    </Geometry>
+                </UI>
+            </DispatchInfo>
+        </Extension>
+    </DispatchInfoList>
+</ExtensionManifest>
