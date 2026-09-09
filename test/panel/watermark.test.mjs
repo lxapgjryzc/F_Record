@@ -19,9 +19,9 @@ import { stubPanel } from "./panel-harness.mjs";
 
 const dom = installDom();
 const panel = stubPanel(mock);
-const { WatermarkFields } = await import("../dist/modules/watermark.mjs");
-const { createTranslate } = await import("../dist/modules/i18n.mjs");
-const { DEFAULT_WATERMARK } = await import("../dist/modules/protocol.mjs");
+const { WatermarkFields } = await import("../../dist/modules/watermark.mjs");
+const { createTranslate } = await import("../../dist/modules/i18n.mjs");
+const { DEFAULT_WATERMARK } = await import("../../dist/modules/protocol.mjs");
 
 const t = createTranslate("en");
 

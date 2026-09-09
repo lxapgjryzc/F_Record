@@ -6,11 +6,15 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node scripts/build.mjs --tests && node --experimental-test-module-mocks --test --test-timeout=60000 \"test/*.test.mjs\"",
+    "test": "node scripts/build.mjs --tests && node --experimental-test-module-mocks --test --test-timeout=60000 \"test/*.test.mjs\" \"test/panel/*.test.mjs\"",
     "check": "npm run typecheck && npm run coverage:identity",
-    "test:only": "node --experimental-test-module-mocks --test --test-timeout=60000 \"test/*.test.mjs\"",
-    "coverage": "node scripts/build.mjs --tests && node --experimental-test-module-mocks --test --test-timeout=60000 --experimental-test-coverage --test-coverage-include=dist/modules/*.mjs \"test/*.test.mjs\"",
-    "coverage:identity": "node scripts/build.mjs --tests && node --experimental-test-module-mocks --test --test-timeout=60000 --experimental-test-coverage --test-coverage-include=dist/modules/*.mjs --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100 \"test/*.test.mjs\""
+    "test:only": "node --experimental-test-module-mocks --test --test-timeout=60000 \"test/*.test.mjs\" \"test/panel/*.test.mjs\"",
+    "coverage": "npm run coverage:core && npm run coverage:panel",
+    "coverage:core": "node scripts/build.mjs --tests && node --experimental-test-module-mocks --test --test-timeout=60000 --experimental-test-coverage --test-coverage-include=dist/modules/*.mjs --test-coverage-exclude=dist/modules/{app,main,ui,dashboard,sessionsView,settingsView,exportDialog,packDialog,review,watermark}.mjs \"test/*.test.mjs\"",
+    "coverage:panel": "node scripts/build.mjs --tests && node --experimental-test-module-mocks --test --test-timeout=60000 --experimental-test-coverage --test-coverage-include=dist/modules/{app,main,ui,dashboard,sessionsView,settingsView,exportDialog,packDialog,review,watermark}.mjs \"test/panel/*.test.mjs\"",
+    "coverage:identity": "npm run coverage:identity:core && npm run coverage:identity:panel",
+    "coverage:identity:core": "node scripts/build.mjs --tests && node --experimental-test-module-mocks --test --test-timeout=60000 --experimental-test-coverage --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100 --test-coverage-include=dist/modules/*.mjs --test-coverage-exclude=dist/modules/{app,main,ui,dashboard,sessionsView,settingsView,exportDialog,packDialog,review,watermark}.mjs \"test/*.test.mjs\"",
+    "coverage:identity:panel": "node scripts/build.mjs --tests && node --experimental-test-module-mocks --test --test-timeout=60000 --experimental-test-coverage --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100 --test-coverage-include=dist/modules/{app,main,ui,dashboard,sessionsView,settingsView,exportDialog,packDialog,review,watermark}.mjs \"test/panel/*.test.mjs\""
   },
   "repository": {
     "type": "git",

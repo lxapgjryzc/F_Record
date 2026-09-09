@@ -17,11 +17,11 @@ import { byText, choose, click, installDom, mount, query, queryAll, textOf } fro
 import { sessionRow } from "./panel-harness.mjs";
 
 const dom = installDom();
-const { PackDialog } = await import("../dist/modules/packDialog.mjs");
-const { ExportDialog } = await import("../dist/modules/exportDialog.mjs");
-const { ReviewDialog } = await import("../dist/modules/review.mjs");
-const { createTranslate } = await import("../dist/modules/i18n.mjs");
-const { DEFAULT_EXPORT_DEFAULTS, DEFAULT_WATERMARK, watermarkDraws } = await import("../dist/modules/protocol.mjs");
+const { PackDialog } = await import("../../dist/modules/packDialog.mjs");
+const { ExportDialog } = await import("../../dist/modules/exportDialog.mjs");
+const { ReviewDialog } = await import("../../dist/modules/review.mjs");
+const { createTranslate } = await import("../../dist/modules/i18n.mjs");
+const { DEFAULT_EXPORT_DEFAULTS, DEFAULT_WATERMARK, watermarkDraws } = await import("../../dist/modules/protocol.mjs");
 
 const t = createTranslate("en");
 

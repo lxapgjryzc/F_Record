@@ -21,8 +21,8 @@ import { sessionRow, stubPanel } from "./panel-harness.mjs";
 
 const dom = installDom();
 const panel = stubPanel(mock);
-const { Sessions, formatDate, pinCurrent } = await import("../dist/modules/sessionsView.mjs");
-const { createTranslate, formatDuration } = await import("../dist/modules/i18n.mjs");
+const { Sessions, formatDate, pinCurrent } = await import("../../dist/modules/sessionsView.mjs");
+const { createTranslate, formatDuration } = await import("../../dist/modules/i18n.mjs");
 
 const t = createTranslate("en");
 

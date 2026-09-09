@@ -17,7 +17,7 @@ import { h } from "preact";
 import { all, byText, choose, click, fire, installDom, mount, query, queryAll, textOf } from "./dom.mjs";
 
 const dom = installDom();
-const ui = await import("../dist/modules/ui.mjs");
+const ui = await import("../../dist/modules/ui.mjs");
 
 /* -------------------------------------------------------------- the icons */
 

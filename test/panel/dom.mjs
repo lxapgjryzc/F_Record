@@ -246,8 +246,16 @@ export function installDom() {
     };
 
     const windowListeners = Object.create(null);
+    // Every question the panel has asked, and the answer waiting for the next
+    // one. Default yes, because a test that means "no" says so.
+    const asked = [];
+    let answer = true;
     const window = {
         document,
+        confirm(question) {
+            asked.push(question);
+            return answer;
+        },
         addEventListener(type, handler) {
             (windowListeners[type] || (windowListeners[type] = [])).push(handler);
         },
@@ -306,6 +314,12 @@ export function installDom() {
             }
         },
         windowListenerCount: (type) => (windowListeners[type] || []).length,
+        /** What the panel has put to the user, oldest first. */
+        asked,
+        /** How the next `confirm` is answered. */
+        answerConfirm(next) {
+            answer = next;
+        },
         /**
          * Runs every deferred effect and stops there.
          *

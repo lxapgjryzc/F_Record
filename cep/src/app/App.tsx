@@ -19,7 +19,7 @@ import { Sessions } from "./components/Sessions";
 import { Settings } from "./components/Settings";
 import { ExportChoice, ExportDialog } from "./components/ExportDialog";
 import { PackDialog } from "./components/PackDialog";
-import { ReviewDecision, ReviewDialog, ReviewState } from "./components/Review";
+import { ReviewDecision, ReviewDialog, ReviewOpened, ReviewState } from "./components/Review";
 import { toFramePaths } from "../node/export";
 import { runExport, runStillWatermark } from "../node/ffmpeg";
 import { copyImageToClipboard } from "../node/clipboard";
@@ -118,32 +118,17 @@ export function App(): JSX.Element {
 
     /* ------------------------------------------------------------ bridge */
 
-    useEffect(() => {
-        makePanelPersistent();
-
-        const applyTheme = () => {
-            const theme = readHostTheme();
-            if (theme.dark) {
-                document.documentElement.classList.remove("light");
-            } else {
-                document.documentElement.classList.add("light");
-            }
-        };
-        applyTheme();
-        onThemeChanged(applyTheme);
-
-        // Focus rings only for keyboard users. Chromium 61 has no
-        // :focus-visible, so the distinction is made here instead.
-        const onKeyDown = (event: KeyboardEvent) => {
-            if (event.key === "Tab") {
-                document.body.classList.add("kbd");
-            }
-        };
-        const onMouseDown = () => document.body.classList.remove("kbd");
-        window.addEventListener("keydown", onKeyDown);
-        window.addEventListener("mousedown", onMouseDown);
-
-        const client = new BridgeClient({
+    /**
+     * Made on the first render rather than in the effect below.
+     *
+     * The effect is still what starts and stops it -- but preact defers
+     * effects to the next frame, and a client that only exists from then on
+     * would leave `send` with nothing to send through for that first frame.
+     * Making it here means there is never a moment when the panel is up and
+     * the bridge is not.
+     */
+    if (clientRef.current === null) {
+        clientRef.current = new BridgeClient({
             onStatus: (next, detail) => {
                 setStatus(next);
                 setStatusDetail(detail);
@@ -169,7 +154,34 @@ export function App(): JSX.Element {
                 }
             }
         });
-        clientRef.current = client;
+    }
+    const client = clientRef.current;
+
+    useEffect(() => {
+        makePanelPersistent();
+
+        const applyTheme = () => {
+            const theme = readHostTheme();
+            if (theme.dark) {
+                document.documentElement.classList.remove("light");
+            } else {
+                document.documentElement.classList.add("light");
+            }
+        };
+        applyTheme();
+        onThemeChanged(applyTheme);
+
+        // Focus rings only for keyboard users. Chromium 61 has no
+        // :focus-visible, so the distinction is made here instead.
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Tab") {
+                document.body.classList.add("kbd");
+            }
+        };
+        const onMouseDown = () => document.body.classList.remove("kbd");
+        window.addEventListener("keydown", onKeyDown);
+        window.addEventListener("mousedown", onMouseDown);
+
         client.start();
 
         return () => {
@@ -177,21 +189,17 @@ export function App(): JSX.Element {
             window.removeEventListener("keydown", onKeyDown);
             window.removeEventListener("mousedown", onMouseDown);
         };
-    }, [pushToast]);
+    }, [client]);
 
     const send = useCallback(
         async (command: Parameters<BridgeClient["send"]>[0]) => {
-            const client = clientRef.current;
-            if (!client) {
-                throw new Error("Not connected");
-            }
             const result = await client.send(command);
             if (!result.ok) {
                 throw new Error(result.error || "Command failed");
             }
             return result;
         },
-        []
+        [client]
     );
 
     const patchConfig = useCallback(
@@ -557,7 +565,13 @@ export function App(): JSX.Element {
             .catch((e: Error) => pushToast("negative", e.message));
     };
 
-    /** Opens every ticked recording's document in Photoshop, one after another. */
+    /**
+     * Opens every ticked recording's document in Photoshop, one after another.
+     *
+     * Every failure it can meet is reported as it happens, and a document
+     * that would not open does not stop the rest, so there is nothing left
+     * for the caller to catch.
+     */
     const openSelected = async () => {
         const rows = selectedRows();
         let opened = 0;
@@ -662,30 +676,43 @@ export function App(): JSX.Element {
                 }
             }
         }
-        try {
-            const result = await send({
-                type: "packSessions",
-                sessionIds: target.sessions.map((row) => row.sessionId),
-                folder: target.folder,
-                deleteAfter: deleteAfter
-            });
-            const listed = result.sessions || [];
-            setSessions(listed);
-            reportWarnings(result);
-            const queued = listed.filter((row) => !!row.packing).length;
-            if (queued > 0) {
-                packWatchRef.current = { folder: target.folder, count: queued };
-                pushToast("info", t("pack.started", queued));
-            }
-        } catch (e) {
-            pushToast("negative", (e as Error).message);
+        // A refusal is reported where this is started from, rather than caught
+        // here and reported again in the same words.
+        const result = await send({
+            type: "packSessions",
+            sessionIds: target.sessions.map((row) => row.sessionId),
+            folder: target.folder,
+            deleteAfter: deleteAfter
+        });
+        const listed = result.sessions || [];
+        setSessions(listed);
+        reportWarnings(result);
+        const queued = listed.filter((row) => !!row.packing).length;
+        if (queued > 0) {
+            packWatchRef.current = { folder: target.folder, count: queued };
+            pushToast("info", t("pack.started", queued));
         }
     };
 
     /* ------------------------------------------------------------- review */
 
+    // The archive rather than the whole listing, because that is what a review
+    // walks: a row unarchived while it is being looked at has left the review
+    // as surely as one deleted has.
     const reviewSession = (id: string): SessionSummary | null =>
-        (sessions || []).filter((row) => row.sessionId === id)[0] || null;
+        archivedRows.filter((row) => row.sessionId === id)[0] || null;
+
+    /**
+     * Records how the document in front turned out.
+     *
+     * The review is still up whenever this runs: every control that could
+     * close it is off while Photoshop is opening something.
+     */
+    const settleOpen = (opened: ReviewOpened) => {
+        setReview((current) =>
+            Object.assign({}, current as ReviewState, { opening: false, opened: opened })
+        );
+    };
 
     /** Opens the document of the recording at `index` and notes what happened. */
     const openForReview = (ids: string[], index: number) => {
@@ -693,18 +720,14 @@ export function App(): JSX.Element {
         const history = session ? session.filePathHistory : [];
         const target = latestExistingPath(history);
         if (!target) {
-            setReview((current) =>
-                current ? Object.assign({}, current, { opening: false, opened: history.length > 0 ? "missing" : "none" }) : current
-            );
+            settleOpen(history.length > 0 ? "missing" : "none");
             return;
         }
         openDocumentForReview(target)
-            .then((outcome) => {
-                setReview((current) => (current ? Object.assign({}, current, { opening: false, opened: outcome }) : current));
-            })
+            .then(settleOpen)
             .catch((e: Error) => {
                 pushToast("negative", e.message);
-                setReview((current) => (current ? Object.assign({}, current, { opening: false, opened: "error" }) : current));
+                settleOpen("error");
             });
     };
 
@@ -738,11 +761,15 @@ export function App(): JSX.Element {
         }
     };
 
-    const decideReview = async (decision: ReviewDecision | "keep") => {
-        const current = review;
-        if (!current || current.opening) {
-            return;
-        }
+    // The review these three act on is handed down from the render that drew
+    // the buttons, rather than read back out of state that may have moved on
+    // -- so the only thing left to check is whether Photoshop is still opening
+    // something, which is the one race that is real.
+    //
+    // Only `stopReview` checks `opening` for itself. The three choice buttons
+    // are drawn disabled while one is opening, but the dialog can also be
+    // dismissed by clicking the scrim, and a scrim cannot be greyed out.
+    const decideReview = async (current: ReviewState, decision: ReviewDecision | "keep") => {
         const id = current.ids[current.index];
         const decisions = Object.assign({}, current.decisions);
         if (decision === "keep") {
@@ -761,9 +788,8 @@ export function App(): JSX.Element {
         openForReview(current.ids, next);
     };
 
-    const stopReview = async () => {
-        const current = review;
-        if (!current || current.opening) {
+    const stopReview = async (current: ReviewState) => {
+        if (current.opening) {
             return;
         }
         setReview(Object.assign({}, current, { opening: true }));
@@ -771,18 +797,15 @@ export function App(): JSX.Element {
         setReview(Object.assign({}, current, { opening: false, summary: true }));
     };
 
-    const applyReview = () => {
-        const current = review;
+    // Nothing to delete is not a case here: the summary only offers to apply
+    // when something was marked.
+    const applyReview = (current: ReviewState) => {
         setReview(null);
-        if (!current) {
-            return;
-        }
-        const ids = Object.keys(current.decisions);
-        if (ids.length === 0) {
-            return;
-        }
         runDelete(
-            ids.map((id) => ({ sessionId: id, withDocument: current.decisions[id] === "deleteWithFile" }))
+            Object.keys(current.decisions).map((id) => ({
+                sessionId: id,
+                withDocument: current.decisions[id] === "deleteWithFile"
+            }))
         );
     };
 
@@ -872,11 +895,7 @@ export function App(): JSX.Element {
                             }
                         }}
                         copying={copying}
-                        onCopyFrame={() => {
-                            copyFrameToClipboard().catch((e: Error) =>
-                                pushToast("negative", e.message)
-                            );
-                        }}
+                        onCopyFrame={copyFrameToClipboard}
                     />
                 ) : null}
 
@@ -978,9 +997,7 @@ export function App(): JSX.Element {
                                 .catch((e: Error) => pushToast("negative", e.message));
                         }}
                         onArchiveStale={archiveStale}
-                        onOpenSelected={() => {
-                            openSelected().catch((e: Error) => pushToast("negative", e.message));
-                        }}
+                        onOpenSelected={openSelected}
                         onPackSelected={packSelected}
                         onDeleteSelected={deleteSelected}
                         onReview={startReview}
@@ -1055,12 +1072,15 @@ export function App(): JSX.Element {
                         return history.length > 0 ? history[history.length - 1] : null;
                     })()}
                     onDecide={(decision) => {
-                        decideReview(decision).catch((e: Error) => pushToast("negative", e.message));
+                        decideReview(review, decision).catch((e: Error) => pushToast("negative", e.message));
                     }}
                     onStop={() => {
-                        stopReview().catch((e: Error) => pushToast("negative", e.message));
+                        // Nothing in here reports upwards; it closes a document
+                        // and moves to the summary, and a document that will
+                        // not close is already forgiven.
+                        stopReview(review);
                     }}
-                    onApply={applyReview}
+                    onApply={() => applyReview(review)}
                     onDiscard={() => setReview(null)}
                 />
             ) : null}

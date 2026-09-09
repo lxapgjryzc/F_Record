@@ -11,17 +11,60 @@
  * The stand-ins are behaviour tables rather than fixed fakes: a test sets
  * `panel.host.readHostTheme = ...` for the one call it is about and leaves the
  * rest alone.
+ *
+ *
+ * Why these tests live in a directory of their own
+ * ------------------------------------------------
+ *
+ * Because of what module mocking does to a coverage report. When a module is
+ * replaced with `mock.module` and then imported, node records coverage for it
+ * under the real file's path -- but the numbers are the stand-in's, which is
+ * a handful of lines with nothing in them. That result does not add to the
+ * one the module's own test file earned; it replaces it. So psHost.mjs, a
+ * file covered to the last branch by psHost.test.mjs, reads as 27% the moment
+ * a panel test stands it in.
+ *
+ * The fix is to keep the two apart: `coverage:core` measures everything
+ * except the panel's own components over test/*.test.mjs, and
+ * `coverage:panel` measures the panel components over these. Neither pass
+ * measures a module the other one replaces, both are held to 100%, and
+ * between them every module is measured exactly once.
  */
 
-import * as realPsHost from "../dist/modules/psHost.mjs";
-import * as realFfmpeg from "../dist/modules/ffmpeg.mjs";
-import * as realClipboard from "../dist/modules/clipboard.mjs";
-import { PROTOCOL_VERSION, DEFAULT_CONFIG } from "../dist/modules/protocol.mjs";
+import { PROTOCOL_VERSION, DEFAULT_CONFIG } from "../../dist/modules/protocol.mjs";
 
-const PANEL_BRIDGE = "../dist/modules/panelBridge.mjs";
-const PS_HOST = "../dist/modules/psHost.mjs";
-const FFMPEG = "../dist/modules/ffmpeg.mjs";
-const CLIPBOARD = "../dist/modules/clipboard.mjs";
+/**
+ * The modules replaced here are named rather than imported and re-exported.
+ *
+ * Importing one to copy its exports would load it as well as replace it, and
+ * a module can only be measured where it is not a stand-in -- see above. A
+ * name that goes missing from this list shows up as an import error rather
+ * than as a silent gap.
+ */
+const PS_HOST_EXPORTS = [
+    "readHostTheme",
+    "hostUiLocale",
+    "onThemeChanged",
+    "makePanelPersistent",
+    "evalScript",
+    "writeFinalStill",
+    "hasOpenDocument",
+    "openDocumentInPhotoshop",
+    "openDocumentForReview",
+    "closeDocumentInPhotoshop",
+    "switchToDocumentInPhotoshop",
+    "chooseFolder",
+    "chooseImageFile",
+    "chooseSavePath",
+    "openInExplorer",
+    "openUrl"
+];
+
+const PANEL_BRIDGE = "../../dist/modules/panelBridge.mjs";
+const PS_HOST = "../../dist/modules/psHost.mjs";
+const FFMPEG = "../../dist/modules/ffmpeg.mjs";
+const CLIPBOARD = "../../dist/modules/clipboard.mjs";
+const COMPAT = "../../dist/modules/compat.mjs";
 
 /** A state object shaped the way the generator sends one. */
 export function panelState(overrides = {}) {
@@ -94,17 +137,25 @@ export function sessionRow(overrides = {}) {
  * Call once per test file, before importing app.mjs.
  */
 export function stubPanel(mock) {
+    /**
+     * The answer a command gets when a test has not said otherwise.
+     *
+     * The listing comes back with everything, as the real protocol does for
+     * every command that can change it -- so a test says what the shelf looks
+     * like afterwards by setting `bridge.sessions` before the click.
+     */
+    const plainReply = () => ({ ok: true, state: bridge.state, sessions: bridge.sessions });
+
     const bridge = {
         listeners: null,
         commands: [],
         started: 0,
         stopped: 0,
         /** What each command answers with; a function may throw to reject. */
-        reply(command) {
-            if (command.type === "listSessions") {
-                return { ok: true, sessions: bridge.sessions };
-            }
-            return { ok: true, state: bridge.state };
+        reply: plainReply,
+        /** Puts that back, so one test's stubbed answer is not the next one's. */
+        replyPlainly() {
+            bridge.reply = plainReply;
         },
         sessions: [],
         state: null
@@ -147,8 +198,12 @@ export function stubPanel(mock) {
     bridge.sent = (type) => bridge.commands.filter((command) => command.type === type);
     bridge.last = (type) => bridge.sent(type).pop() || null;
 
-    const host = {
-        calls: [],
+    /**
+     * What Photoshop does when a test has not said otherwise: everything
+     * works, and every chooser is cancelled -- a test that means to pick a
+     * file says which.
+     */
+    const hostDefaults = {
         readHostTheme: () => ({ dark: true, background: "rgb(50,50,50)" }),
         hostUiLocale: () => "en_US",
         onThemeChanged: () => {},
@@ -158,6 +213,7 @@ export function stubPanel(mock) {
         chooseSavePath: () => null,
         openInExplorer: () => {},
         openUrl: () => {},
+        evalScript: () => Promise.resolve(""),
         writeFinalStill: () => Promise.resolve("ok"),
         hasOpenDocument: () => Promise.resolve(true),
         openDocumentInPhotoshop: () => Promise.resolve("ok"),
@@ -166,15 +222,14 @@ export function stubPanel(mock) {
         switchToDocumentInPhotoshop: () => Promise.resolve("ok")
     };
 
+    const host = { calls: [], ...hostDefaults };
+
     const hostExports = {};
-    for (const name of Object.keys(realPsHost)) {
-        hostExports[name] =
-            typeof host[name] === "function"
-                ? (...args) => {
-                      host.calls.push({ name, args });
-                      return host[name](...args);
-                  }
-                : realPsHost[name];
+    for (const name of PS_HOST_EXPORTS) {
+        hostExports[name] = (...args) => {
+            host.calls.push({ name, args });
+            return host[name](...args);
+        };
     }
 
     const media = {
@@ -188,7 +243,6 @@ export function stubPanel(mock) {
     };
 
     const ffmpegExports = {
-        ...realFfmpeg,
         runExport(request, onProgress) {
             let settle;
             const promise = new Promise((resolve, reject) => {
@@ -208,17 +262,109 @@ export function stubPanel(mock) {
     };
 
     const clipboardExports = {
-        ...realClipboard,
         copyImageToClipboard(imagePath, tempDir) {
             media.clipboard.push({ imagePath, tempDir });
             return media.copyFails ? Promise.reject(media.copyFails) : Promise.resolve();
         }
     };
 
+    // What the panel reaches for out of shared/compat, directly and through
+    // shared/paths. The description is a fixed string rather than this
+    // machine's, so a test can assert the words that reach the screen, and the
+    // data directory is a fixed one so no test writes anywhere real.
+    const made = [];
+    const compatExports = {
+        mkdirp: (target) => {
+            made.push(target);
+        },
+        describeNodeCompat: () => "Node 8.6 (mkdir, rm, rmdir)",
+        getUserDataDir: () => "C:\\Users\\test\\AppData\\Roaming",
+        pad: (num, size) => {
+            let out = String(Math.floor(Math.abs(num)));
+            while (out.length < size) {
+                out = "0" + out;
+            }
+            return out;
+        }
+    };
+
+    mock.module(COMPAT, { namedExports: compatExports });
     mock.module(PANEL_BRIDGE, { namedExports: { BridgeClient: FakeBridgeClient } });
     mock.module(PS_HOST, { namedExports: hostExports });
     mock.module(FFMPEG, { namedExports: ffmpegExports });
     mock.module(CLIPBOARD, { namedExports: clipboardExports });
 
-    return { bridge, host, media };
+    /** Back to "everything works", so one test's stand-in is not the next's. */
+    function reset() {
+        bridge.replyPlainly();
+        bridge.commands.length = 0;
+        bridge.sessions = [];
+        Object.assign(host, hostDefaults);
+        host.calls.length = 0;
+        media.exports.length = 0;
+        media.stills.length = 0;
+        media.clipboard.length = 0;
+        media.stillFails = null;
+        media.copyFails = null;
+        made.length = 0;
+    }
+
+    return { bridge, host, media, made, reset };
+}
+
+/**
+ * A disk with only the folders and files a test says are there.
+ *
+ * App.tsx asks the filesystem three questions -- does this document still
+ * exist, what frames are in this folder, and please forget this scratch file
+ * -- and every one of them decides something visible. `mkdirp` is replaced
+ * alongside them so no test writes a folder onto the real machine.
+ */
+export function stubFs(mock) {
+    const disk = {
+        /** Absolute paths that exist. */
+        files: new Set(),
+        /** Folder path to the names in it. */
+        folders: new Map(),
+        /** Paths that were asked to be deleted. */
+        unlinked: [],
+        /** Set to make every call throw, as an unreadable drive would. */
+        broken: null
+    };
+
+    const check = () => {
+        if (disk.broken) {
+            throw disk.broken;
+        }
+    };
+
+    mock.module("fs", {
+        namedExports: {
+            existsSync(target) {
+                check();
+                return disk.files.has(target) || disk.folders.has(target);
+            },
+            readdirSync(folder) {
+                check();
+                if (!disk.folders.has(folder)) {
+                    const error = new Error("ENOENT: no such directory, scandir '" + folder + "'");
+                    error.code = "ENOENT";
+                    throw error;
+                }
+                return disk.folders.get(folder).slice();
+            },
+            unlinkSync(target) {
+                disk.unlinked.push(target);
+                check();
+                if (!disk.files.has(target)) {
+                    const error = new Error("ENOENT: no such file, unlink '" + target + "'");
+                    error.code = "ENOENT";
+                    throw error;
+                }
+                disk.files.delete(target);
+            }
+        }
+    });
+
+    return disk;
 }

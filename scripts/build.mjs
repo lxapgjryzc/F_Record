@@ -93,6 +93,7 @@ const TEST_ENTRIES = {
     locales: "cep/src/app/locales/index.ts",
     // The panel itself. One entry per component for the same reason as
     // everything else here: a number for App.tsx should be about App.tsx.
+    main: "cep/src/app/main.tsx",
     app: "cep/src/app/App.tsx",
     ui: "cep/src/app/components/ui.tsx",
     dashboard: "cep/src/app/components/Dashboard.tsx",
@@ -191,6 +192,10 @@ async function buildTestBundles() {
             // version would fall back to its dev default, and the test bundle
             // would be exercising a line the real one never runs.
             define: { __PLUGIN_VERSION__: JSON.stringify(VERSION) },
+            // main.tsx pulls in the stylesheet, which the shipped bundle
+            // turns into panel.css. There is nothing to measure in it and
+            // nothing to render it here, so it is dropped.
+            loader: { ".css": "empty" },
             // Dependencies stay imports as well, so a coverage report is
             // about our code and not about jpeg-js.
             packages: "external",

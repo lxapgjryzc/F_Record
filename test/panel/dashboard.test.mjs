@@ -18,8 +18,8 @@ import { panelState, sessionRow, stubPanel } from "./panel-harness.mjs";
 
 const dom = installDom();
 const panel = stubPanel(mock);
-const { Dashboard } = await import("../dist/modules/dashboard.mjs");
-const { createTranslate, formatDuration, formatMillis } = await import("../dist/modules/i18n.mjs");
+const { Dashboard } = await import("../../dist/modules/dashboard.mjs");
+const { createTranslate, formatDuration, formatMillis } = await import("../../dist/modules/i18n.mjs");
 
 const t = createTranslate("en");
 
