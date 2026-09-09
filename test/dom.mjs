@@ -206,6 +206,21 @@ class FakeElement extends FakeNode {
 /* ------------------------------------------------------------- installing */
 
 /**
+ * The re-render batches waiting to be run, one per installed DOM.
+ *
+ * `mount`, `rerender` and `fire` are module functions rather than methods, so
+ * they reach the batch this way rather than through a dom the caller has to
+ * remember to pass.
+ */
+const drains = new Set();
+
+function paint() {
+    for (const drain of drains) {
+        drain();
+    }
+}
+
+/**
  * Puts a document, a window and a preact effect queue on the globals, and
  * hands back the container to render into.
  *
@@ -253,11 +268,28 @@ export function installDom() {
         effects.push(callback);
     };
 
-    // And it batches re-renders onto a microtask. Rendering as soon as state
-    // changes is what preact's own test-utils do, and it means a test can
-    // click a switch and look at it on the next line.
+    // And it batches re-renders onto a microtask, which would leave a test
+    // looking at the panel as it was before the click. So the batch is held
+    // here instead and run at the points below where a browser would have
+    // painted -- after an event, and after a render from outside.
+    //
+    // Held rather than run on the spot, because a component is allowed to set
+    // state while rendering (the watermark text box does, when a config lands
+    // from elsewhere) and re-entering preact mid-render tears up its idea of
+    // which component it is in.
+    let pending = null;
     const savedDebounce = options.debounceRendering;
-    options.debounceRendering = (process) => process();
+    options.debounceRendering = (process) => {
+        pending = process;
+    };
+    const drain = () => {
+        while (pending !== null) {
+            const process = pending;
+            pending = null;
+            process();
+        }
+    };
+    drains.add(drain);
 
     const saved = { document: globalThis.document, window: globalThis.window };
     globalThis.document = document;
@@ -274,22 +306,38 @@ export function installDom() {
             }
         },
         windowListenerCount: (type) => (windowListeners[type] || []).length,
+        /**
+         * Runs every deferred effect and stops there.
+         *
+         * For a component whose effects only touch the DOM -- attaching a
+         * listener, measuring a box -- this is all that is needed, and it
+         * keeps the test synchronous enough to read.
+         */
+        runEffects() {
+            while (effects.length > 0) {
+                effects.shift()();
+            }
+            drain();
+        },
         /** Runs every deferred effect, then lets the promises they made settle. */
         async flush(times = 6) {
             for (let round = 0; round < times; round++) {
                 while (effects.length > 0) {
                     effects.shift()();
                 }
+                drain();
                 await Promise.resolve();
                 await new Promise((resolve) => setTimeout(resolve, 0));
             }
             while (effects.length > 0) {
                 effects.shift()();
             }
+            drain();
         },
         cleanup() {
             options.requestAnimationFrame = savedRaf;
             options.debounceRendering = savedDebounce;
+            drains.delete(drain);
             for (const key of ["document", "window"]) {
                 if (saved[key] === undefined) {
                     delete globalThis[key];
@@ -306,6 +354,21 @@ export function mount(dom, vnode) {
     const container = dom.document.createElement("div");
     dom.body.appendChild(container);
     preactRender(vnode, container);
+    paint();
+    return container;
+}
+
+/**
+ * Renders again into a container that already has something in it.
+ *
+ * This is how a test plays the part of the parent: a component handed new
+ * props is a different thing from one mounted fresh, and the difference --
+ * which effects re-run, what state survives -- is exactly what some of these
+ * components are about.
+ */
+export function rerender(container, vnode) {
+    preactRender(vnode, container);
+    paint();
     return container;
 }
 
@@ -464,6 +527,7 @@ export function fire(element, type, init) {
             break;
         }
     }
+    paint();
     return event;
 }
 
