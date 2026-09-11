@@ -112,6 +112,7 @@ straight to deletion.
 | Idle timeout | Stops the clock after this long without drawing, so time-spent does not count staring at the screen. |
 | Stale recordings | The thresholds behind "Archive stale" and "Select stale": fewer frames than this, or created more than this many days ago. Either alone is enough. Defaults to 20 frames and 30 days; Off ignores that rule. |
 | Watermark | Stamps your name or a logo on exported videos, and on the canvas copied to the clipboard. See the export section below. |
+| Copied canvas size | How big Copy canvas makes what it puts on the clipboard, by the same rule as the recording resolution. 1080p by default; Original for every pixel. See the copy canvas section below. |
 | Language | Follows Photoshop by default; can be set by hand. See the language section below. |
 | Check for updates | **Off by default.** When on, asks GitHub about once a day whether a newer version exists. |
 
@@ -187,10 +188,21 @@ deliberate act that already opens a dialog to be asked in, while copying the
 canvas mid-drawing has the same answer nearly every time. The switch is hidden
 when the watermark itself is off, since there is then nothing to add.
 
-The canvas is copied at its own size, not scaled. Capture is paused for the
-moment it takes, so the copy is not filed away as a frame of the recording.
-Windows goes through PowerShell and macOS through AppleScript, both of which
-are already on the machine.
+**It is not the original by default.** The button is for showing someone where
+the work stands, and the clipboard holds an uncompressed bitmap: a 6000-pixel
+canvas is a hundred-odd megabytes that every chat window then has to swallow.
+Only pixels make that smaller — a JPEG quality would change how the picture
+looks, not what it costs to paste — so the setting is "Copied canvas size", in
+the recording's own resolutions and by the recording's own rule: about the
+pixels of a 16:9 frame of that height, a smaller canvas copied as it is, and
+1080p exactly the size of a 1080p frame. 1080p is the default; nothing is
+visibly lost until it is zoomed into. Choose Original for every pixel. The
+scaling happens before the mark goes on, so the mark is sized against what
+lands on the clipboard, in the same proportion it has on the video.
+
+Capture is paused for the moment it takes, so the copy is not filed away as a
+frame of the recording. Windows goes through PowerShell and macOS through
+AppleScript, both of which are already on the machine.
 
 ---
 
@@ -280,6 +292,16 @@ mid-drawing orphaned the recording and started a second folder.
 Any one of them can re-identify the document, and **whenever the PSD copy is
 found missing it is written straight back**. The manual patch in 3.x became an
 automatic, permanent invariant.
+
+The recovery index is the odd one out: it remembers a *file*, not a document,
+and finds whatever sits at that path now. File names get reused far more
+readily than drawings do — a new piece saved under an old name, one PSD copied
+over another in Explorer — and the path is the same while the drawing is not.
+So the index only counts when two things hold: the document was **opened from**
+that file (one just saved to the path is a new piece, and its own recording, if
+any, is already in the first two places), and the canvas is the size the
+recording was last seen at. The id inside the PSD is never overruled by the
+index — it travels with the pixels, wherever the file is copied or renamed to.
 
 When all three miss — say you restart Photoshop and open an unfamiliar file —
 matching sessions are **offered as a choice, never adopted silently**. Picking

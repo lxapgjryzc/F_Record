@@ -88,6 +88,9 @@ export const dict: Record<string, string> = {
     "watermark.dialog.hint": "スタイル・位置・サイズ・不透明度は設定で変更します。",
     "settings.clipboardWatermark": "コピーする画面に透かしを入れる",
     "settings.clipboardWatermark.hint": "「画面をコピー」がクリップボードに置くものに透かしを入れるかどうか。オフならそのままの画をコピーします。",
+    "settings.clipboardResolution": "コピーする画面の解像度",
+    "settings.clipboardResolution.original": "原寸",
+    "settings.clipboardResolution.hint": "「画面をコピー」がクリップボードに置く画の大きさ。基準は録画の解像度と同じで、その高さの 16:9 一コマ分ほどの画素数になり、それより小さいキャンバスはそのままコピーします。進捗を見せるなら 1080p で十分、拡大しなければ違いは分かりません。全画素が必要なら「原寸」を。",
 
     "toast.dismiss": "閉じる",
 

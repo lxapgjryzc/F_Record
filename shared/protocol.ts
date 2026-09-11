@@ -5,19 +5,19 @@
  */
 
 /**
- * Bumped for 12: `clipboardWatermark`. As with `exportDefaults` and `style`
- * inside the watermark before it, a new setting means a panel newer than its
- * generator, and the mismatch has to be visible rather than showing up as a
- * switch whose position is not respected.
+ * Bumped for 13: `clipboardResolution`. As with `clipboardWatermark` before
+ * it, and `exportDefaults` and `style` inside the watermark before that, a
+ * new setting means a panel newer than its generator, and the mismatch has to
+ * be visible rather than showing up as a box whose choice is not respected.
  *
  * An older generator would in fact carry this field through untouched -- it
  * copies the stored config wholesale and only overwrites the keys it knows --
- * so the switch would stick. What it would not do is normalize it, and it is
+ * so the choice would stick. What it would not do is normalize it, and it is
  * the generator that owns the config file. Saying "these two halves are not
  * the same version" is cheaper than working out, for each new field, whether
  * the older half happens to be harmless.
  */
-export const PROTOCOL_VERSION = 12;
+export const PROTOCOL_VERSION = 13;
 export const PLUGIN_NAME = "F_Record";
 
 /** Where users are asked to file bugs, and where update checks look. */
@@ -31,6 +31,43 @@ export const RELEASES_API =
 /* ------------------------------------------------------------------ config */
 
 export type Resolution = "360" | "720" | "1080" | "1440" | "2160";
+
+export const RESOLUTIONS: Resolution[] = ["360", "720", "1080", "1440", "2160"];
+
+/**
+ * How big "Copy canvas" makes the picture it puts on the clipboard.
+ *
+ * The recording's resolutions, in the recording's sense of the word -- a
+ * pixel budget, about that of a 16:9 frame of the named height, whatever
+ * shape the canvas is; see shared/fit.ts -- plus "original", which copies
+ * every pixel. Pixels are the only lever there is: the clipboard holds an
+ * uncompressed bitmap, so a JPEG quality would change how the picture looks
+ * and not what it costs to paste.
+ */
+export type ClipboardResolution = Resolution | "original";
+
+export const CLIPBOARD_RESOLUTIONS: ClipboardResolution[] = (RESOLUTIONS as ClipboardResolution[]).concat([
+    "original"
+]);
+
+/**
+ * 1080p: the button is for showing someone where the work stands, and at
+ * about two million pixels nothing is visibly lost until it is zoomed into.
+ */
+export const DEFAULT_CLIPBOARD_RESOLUTION: ClipboardResolution = "1080";
+
+/**
+ * Forces whatever a config holds into a ClipboardResolution.
+ *
+ * Both ends need it: the generator normalizes what it stores, and the panel
+ * has to fill its box in when a generator that predates the setting sends
+ * nothing at all. A number from a hand-edited file is read as its digits;
+ * anything else lands on the default.
+ */
+export function normalizeClipboardResolution(value: unknown): ClipboardResolution {
+    const key = String(value) as ClipboardResolution;
+    return CLIPBOARD_RESOLUTIONS.indexOf(key) === -1 ? DEFAULT_CLIPBOARD_RESOLUTION : key;
+}
 
 /**
  * The ten locales Photoshop ships in that cover essentially all of its users.
@@ -312,6 +349,8 @@ export interface Config {
      * copy is the picture as it stands.
      */
     clipboardWatermark: boolean;
+    /** How big the copied canvas comes out. See ClipboardResolution. */
+    clipboardResolution: ClipboardResolution;
     /** Where the export dialog opens: whatever it was last confirmed with. */
     exportDefaults: ExportDefaults;
 }
@@ -335,6 +374,7 @@ export const DEFAULT_CONFIG: Omit<Config, "processImageFolderPath"> = {
     // On: someone who has set a watermark up wants it on what they hand out,
     // and the copy button exists to hand something out.
     clipboardWatermark: true,
+    clipboardResolution: DEFAULT_CLIPBOARD_RESOLUTION,
     exportDefaults: DEFAULT_EXPORT_DEFAULTS
 };
 

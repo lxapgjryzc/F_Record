@@ -262,7 +262,7 @@ test("File > New cannot take the recording away from the document behind it", as
     }
 });
 
-test("a session id written into the wrong PSD by anything at all is not believed", async (t) => {
+test("an id another open document is recording is not believed, however it got into the PSD", async (t) => {
     const world = makeWorld();
     t.after(() => world.temp.cleanup());
 
@@ -275,27 +275,28 @@ test("a session id written into the wrong PSD by anything at all is not believed
     await world.sync(68);
     const theirs = world.sessionOf.get(68);
 
-    // However it got there -- a stray write, a copied file, a plug-in of our
-    // own from another machine -- document 59 now carries document 68's id.
+    // However it got there -- a stray write, a plug-in of our own from
+    // another machine -- document 59 now carries document 68's id, and
+    // document 68 is open and recording into it.
     world.ps.setSettings(59, { sessionId: theirs });
     world.switchTo(59);
     const after = await world.sync(59);
 
-    assert.equal(after.session.sessionId, original, "the file's own recording wins");
+    assert.equal(after.session.sessionId, original, "the document's own recording wins");
     assert.equal(after.session.manifest.frameCount, 2460);
     assert.equal(world.ps.peek(59).sessionId, original, "and the PSD is repaired");
     assert.ok(
-        world.logs.some((line) => /warn: .*has never been/.test(line)),
-        "loudly, because something is writing ids it should not"
+        world.logs.some((line) => /another open document is already recording it; looking further/.test(line)),
+        "and it says why the id in the PSD was passed over"
     );
 });
 
-test("the recording follows the file, not the id, when the two disagree", async (t) => {
+test("an untitled document carrying a recording's id continues it", async (t) => {
     const world = makeWorld();
     t.after(() => world.temp.cleanup());
 
-    // A document that has never been saved has no file to appeal to, so the
-    // id it carries is all there is and must still be honoured.
+    // Nothing but the id: no file, no map entry, no index entry. It is the
+    // document's own word and it is honoured.
     world.newDocument(4, "Untitled-1");
     const first = await world.sync(4);
     world.draw(4, 10);

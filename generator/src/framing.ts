@@ -6,6 +6,7 @@
  */
 
 import { Bounds, Resolution } from "../../shared/protocol";
+import { fitToResolution, longestSideFor } from "../../shared/fit";
 import { Padding, NO_PADDING } from "./encoder";
 
 export function boundsWidth(bounds: Bounds): number {
@@ -19,23 +20,12 @@ export function boundsHeight(bounds: Bounds): number {
 /**
  * The longest side we want a capture to have.
  *
- * The target is "about as many pixels as a 16:9 frame of the chosen height",
- * so a square canvas and a panoramic one cost roughly the same to capture and
- * both land near the export resolution. Never upscales: a small canvas is
- * captured at its native size.
+ * The rule -- about as many pixels as a 16:9 frame of the chosen height, and
+ * never upscaled -- lives in shared/fit.ts, because the clipboard copy is cut
+ * down by the same one and "1080p" has to mean the same size in both places.
  */
 export function computeMaxDimension(bounds: Bounds, resolution: Resolution): number {
-    const width = boundsWidth(bounds);
-    const height = boundsHeight(bounds);
-    const area = width * height;
-    const longest = Math.max(width, height);
-    if (area <= 0 || longest <= 0) {
-        return 1;
-    }
-    const target = parseInt(resolution, 10);
-    const targetArea = (target * target * 16) / 9;
-    const k = Math.min(Math.sqrt(targetArea / area), 1);
-    return Math.max(1, Math.round(longest * k));
+    return longestSideFor(boundsWidth(bounds), boundsHeight(bounds), resolution);
 }
 
 /**
@@ -64,19 +54,8 @@ export function computeMaxDimension(bounds: Bounds, resolution: Resolution): num
  * is subtraction, with nothing left to get wrong.
  */
 export function computeOutputRect(docBounds: Bounds, resolution: Resolution): Bounds {
-    const width = boundsWidth(docBounds);
-    const height = boundsHeight(docBounds);
-    if (width <= 0 || height <= 0) {
-        return { top: 0, left: 0, right: 1, bottom: 1 };
-    }
-    const maxDimension = computeMaxDimension(docBounds, resolution);
-    const scale = Math.min(1, maxDimension / Math.max(width, height));
-    return {
-        top: 0,
-        left: 0,
-        right: Math.max(1, Math.round(width * scale)),
-        bottom: Math.max(1, Math.round(height * scale))
-    };
+    const fitted = fitToResolution(boundsWidth(docBounds), boundsHeight(docBounds), resolution);
+    return { top: 0, left: 0, right: fitted.width, bottom: fitted.height };
 }
 
 /**

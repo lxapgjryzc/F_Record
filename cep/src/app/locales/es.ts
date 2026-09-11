@@ -90,6 +90,9 @@ export const dict: Record<string, string> = {
     "watermark.dialog.hint": "El estilo, la posición, el tamaño y la opacidad se ajustan en Ajustes.",
     "settings.clipboardWatermark": "Marcar el lienzo copiado",
     "settings.clipboardWatermark.hint": "Si «Copiar lienzo» estampa la marca en lo que va al portapapeles. Desactivado copia la imagen tal cual.",
+    "settings.clipboardResolution": "Tamaño del lienzo copiado",
+    "settings.clipboardResolution.original": "Original",
+    "settings.clipboardResolution.hint": "Cuánto mide lo que «Copiar lienzo» pone en el portapapeles. La misma regla que la resolución de grabación: más o menos los píxeles de un fotograma 16:9 de esa altura, y un lienzo más pequeño se copia tal cual. Para enseñar el avance en un chat basta con 1080p, sin ampliar no se nota la diferencia; «Original» conserva cada píxel.",
 
     "toast.dismiss": "Cerrar",
 

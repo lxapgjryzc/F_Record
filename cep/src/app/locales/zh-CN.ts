@@ -84,6 +84,9 @@ export const dict: Record<string, string> = {
     "watermark.dialog.hint": "样式、位置、大小和不透明度在设置里调。",
     "settings.clipboardWatermark": "复制画面时加水印",
     "settings.clipboardWatermark.hint": "「复制画面」放进剪贴板的是不是盖了水印的那张。关掉就是复制原图。",
+    "settings.clipboardResolution": "复制画面的分辨率",
+    "settings.clipboardResolution.original": "原图",
+    "settings.clipboardResolution.hint": "「复制画面」放进剪贴板的图有多大。口径和录制分辨率一样：像素数大约等于这个高度的 16:9 一帧，画布本来就更小的照原样复制。发进度图 1080p 足够，不放大看不出差别；要全尺寸就选「原图」。",
 
     "toast.dismiss": "关闭",
 

@@ -22,6 +22,13 @@
  * plug-in sends its own script instead. A stamp therefore lands in the
  * document it names, whatever is frontmost, and every write is read back by id
  * to prove it. Queued stamps exist only for writes Photoshop refused outright.
+ *
+ * The index is the odd one out. The other two name a document; it names a
+ * file, and finds whatever sits at that path now -- which, once a file has
+ * been overwritten under the same name, is a different piece of work. So it
+ * is believed only for a document that was opened from the file, on a canvas
+ * the size the recording was last seen at, and never over an id the document
+ * carries itself; see recordingOfFile.
  */
 
 import {
@@ -153,6 +160,13 @@ export class SessionResolver {
     private readonly docToSession: { [docId: number]: string } = {};
     /** Documents whose PSD copy still needs writing once they become active. */
     private readonly pendingStamps: { [docId: number]: string } = {};
+    /**
+     * documentId -> the normalized path the document had when this run first
+     * saw it, "" for one that was untitled. Kept for the whole run, even past
+     * forgetDocument: a document id is never reused within a run, and being
+     * forgotten does not change where a document came from.
+     */
+    private readonly docOrigins: { [docId: number]: string } = {};
     /** Where the last retry left off, so no queued document starves. */
     private stampCursor = 0;
 
@@ -314,79 +328,71 @@ export class SessionResolver {
             out.push({ sessionId: sessionId, source: source, needsStamp: needsStamp });
         };
 
-        const stored = await this.readStoredSessionId(doc.id);
-        const byPath = filePath ? this.index.findByFilePath(filePath) : null;
-        const claimant = byPath ? byPath.sessionId : null;
-
         // A queued stamp means we already know the right id and merely could
         // not write it yet, so whatever sits in the PSD is stale; trusting
         // that would quietly revert the document to the session it was
         // attached to before.
         add(this.pendingStamps[doc.id] || null, "a queued write", true);
 
-        // The id in the PSD is normally the best evidence there is -- except
-        // when the file itself contradicts it.
-        if (filePath && stored && claimant && claimant !== stored &&
-            this.misdirectedStamp(config, stored, claimant, filePath)) {
-            this.log(
-                "warn",
-                "Document " + doc.id + " carries session " + stored + ", which has never been '" +
-                    filePath + "'; preferring " + claimant + ", which has. Something wrote the wrong " +
-                    "id into the document and it is being repaired"
-            );
-            add(claimant, "the recording that claims this file", true);
-        }
-        add(stored, "the document itself", false);
+        // The id in the PSD is the document's own word and the best evidence
+        // there is. It is written only into the document it names (see
+        // stamp.ts), and it travels with the pixels: a file copied or renamed
+        // over another still holds the id of the drawing it contains.
+        add(await this.readStoredSessionId(doc.id), "the document itself", false);
 
         // Both of these mean the PSD's copy was wiped -- almost always by a
         // Save As -- so it has to be written back.
         add(this.docToSession[doc.id] || null, "this run's document map", true);
         const indexed = this.index.findByDocumentId(doc.id);
         add(indexed ? indexed.sessionId : null, "the recovery index", true);
-        add(claimant, "the file it is saved as", true);
+
+        add(this.recordingOfFile(doc, filePath), "the file it was opened from", true);
 
         return out;
     }
 
     /**
-     * True when the id inside the PSD cannot be about this document.
+     * The recording the index says this file belongs to, when that can be
+     * this document's.
      *
-     * A recording's manifest records every path its document has been saved
-     * to, and it is written by the one process that does the recording. So
-     * "this session has been at this path" is a stronger statement than "this
-     * PSD contains this id": the first is our own bookkeeping, the second is a
-     * value in a file that anything -- a misdirected write, a duplicated
-     * layer set, a file copied over another in Explorer -- can have put there.
+     * The index remembers which file each recording was of, and after a
+     * Photoshop restart it is all that is left once a Save As has wiped the
+     * PSD's copy. It is also the only source that names a file rather than a
+     * document, so it is the only one that can be led astray: it finds
+     * whatever sits at the path now, and a name is easily reused.
      *
-     * Only a straight contradiction counts: the stored session has never been
-     * at this path *and* another one has. A document being saved somewhere new
-     * fails the second half, and so is left alone; that is a Save As, which
-     * has its own handling and must not be mistaken for this.
+     * So the document must have been opened from the file. One saved to the
+     * path just now is a new piece of work replacing whatever the old
+     * recording was of; if it has a recording of its own, the sources above
+     * already carry it. And the canvas must be the size the index last saw
+     * the recording's document at: the same file cannot change size without
+     * being resolved again, so a different size is a different file under
+     * the same name.
      */
-    private misdirectedStamp(
-        config: Config,
-        stored: string,
-        claimant: string,
-        filePath: string
-    ): boolean {
-        return (
-            !this.sessionClaimsPath(config, stored, filePath) &&
-            this.sessionClaimsPath(config, claimant, filePath)
-        );
+    private recordingOfFile(doc: DocInfo, filePath: string | null): string | null {
+        if (!filePath || this.docOrigins[doc.id] !== normalizePath(filePath)) {
+            return null;
+        }
+        const entry = this.index.findByFilePath(filePath);
+        if (!entry) {
+            return null;
+        }
+        const size = canvasSize(doc.bounds);
+        if (entry.canvasWidth !== size.width || entry.canvasHeight !== size.height) {
+            return null;
+        }
+        return entry.sessionId;
     }
 
-    /** Whether a session's own manifest records having been at this path. */
-    private sessionClaimsPath(config: Config, sessionId: string, filePath: string): boolean {
-        const folder = locateSession(config.processImageFolderPath, sessionId);
-        const manifest = folder ? readManifest(folder) : null;
-        const history = (manifest && manifest.filePathHistory) || [];
-        const needle = normalizePath(filePath);
-        for (let i = 0; i < history.length; i++) {
-            if (normalizePath(history[i]) === needle) {
-                return true;
-            }
+    /**
+     * Remembers where a document was when this run first met it. Set once:
+     * every path after that is one the document was saved to, not opened
+     * from, which is the distinction recordingOfFile turns on.
+     */
+    private noteOrigin(documentId: number, filePath: string | null): void {
+        if (!(documentId in this.docOrigins)) {
+            this.docOrigins[documentId] = filePath === null ? "" : normalizePath(filePath);
         }
-        return false;
     }
 
     /**
@@ -404,6 +410,7 @@ export class SessionResolver {
         // Everything that could name this document's recording, best first.
         // Any one of them can be the only survivor of a Save As, a crash or a
         // Photoshop restart, which is why there are five.
+        this.noteOrigin(doc.id, filePath);
         const sources = await this.candidateSessions(doc, config, filePath);
 
         let chosen: Candidate | null = null;

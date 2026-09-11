@@ -26,6 +26,7 @@ import {
     selectFrames,
     sequenceSeconds,
     speedForTarget,
+    stillSize,
     tileWatermarkText,
     toFramePaths,
     DEFAULT_FPS,
@@ -257,11 +258,14 @@ function plan(watermark, over) {
     );
 }
 
+/** A still plan that, unless told otherwise, comes out at the picture's own size. */
 function still(watermark, over) {
     return Object.assign(
         {
             width: 2000,
             height: 1500,
+            sourceWidth: 2000,
+            sourceHeight: 1500,
             fps: 1,
             workingFormat: "yuv444p",
             sourcePath: "C:\\temp\\canvas.jpg",
@@ -476,14 +480,39 @@ test("the text is repeated enough to cover the frame, with rows offset", () => {
 
 /* ----------------------------------------------------------------- still */
 
-test("the clipboard still keeps its own size and comes out as one frame", () => {
+test("a still planned at its own size is not resized, and comes out as one frame", () => {
     const args = buildStillArgs(still(null));
     const joined = args.join(" ");
     assert.equal(args.filter((a) => a === "-i").length, 1);
-    assert.ok(!joined.includes("scale="), "nothing is resized: the canvas is the point");
+    assert.ok(!joined.includes("scale="), "the original was asked for, or the canvas fits the budget");
     assert.ok(!joined.includes("pad="), "and nothing is letterboxed either");
     assert.ok(joined.includes("-frames:v 1 -update 1"), "one picture, not an image sequence");
     assert.equal(args[args.length - 1], "C:\\temp\\canvas.png");
+});
+
+test("a still bigger than its plan is scaled down on the way in", () => {
+    const args = buildStillArgs(still(null, { sourceWidth: 4000, sourceHeight: 3000 })).join(" ");
+    assert.ok(args.includes("scale=2000:1500:flags=lanczos"), "to the plan's size, with a filter fit for line art");
+    assert.ok(args.includes("format=yuv444p,scale="), "at full chroma, so colour and line are scaled at one resolution");
+    assert.ok(!args.includes("pad="), "the shape is the canvas's own");
+    // Either side differing is enough; a plan is never the source's width at
+    // another height, but the check is on both.
+    assert.ok(buildStillArgs(still(null, { sourceHeight: 3000 })).join(" ").includes("scale="));
+});
+
+test("the mark goes on after the scale, so it is sized against what is copied", () => {
+    const args = buildStillArgs(still(textMark(), { sourceWidth: 4000, sourceHeight: 3000 })).join(" ");
+    assert.ok(args.indexOf("scale=") < args.indexOf("drawtext"));
+});
+
+test("how big the copy comes out is the recording's own rule, unless the original is asked for", () => {
+    assert.deepEqual(
+        stillSize({ width: 4000, height: 3000 }, "1080"),
+        { width: 1663, height: 1247 },
+        "exactly the size a 1080p frame of this canvas records at"
+    );
+    assert.deepEqual(stillSize({ width: 4000, height: 3000 }, "original"), { width: 4000, height: 3000 });
+    assert.deepEqual(stillSize({ width: 800, height: 600 }, "1080"), { width: 800, height: 600 }, "never upscaled");
 });
 
 test("the still is marked by the very filters an export uses", () => {

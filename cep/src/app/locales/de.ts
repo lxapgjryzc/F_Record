@@ -90,6 +90,9 @@ export const dict: Record<string, string> = {
     "watermark.dialog.hint": "Stil, Position, Größe und Deckkraft stehen in den Einstellungen.",
     "settings.clipboardWatermark": "Kopiertes Bild mit Wasserzeichen",
     "settings.clipboardWatermark.hint": "Ob „Bild kopieren“ das Wasserzeichen auf das setzt, was in die Zwischenablage geht. Aus kopiert das Bild unverändert.",
+    "settings.clipboardResolution": "Größe des kopierten Bilds",
+    "settings.clipboardResolution.original": "Original",
+    "settings.clipboardResolution.hint": "Wie groß das Bild ist, das „Bild kopieren“ in die Zwischenablage legt. Dieselbe Regel wie bei der Aufnahmeauflösung: etwa so viele Pixel wie ein 16:9-Bild dieser Höhe, eine kleinere Leinwand wird unverändert kopiert. Für einen Zwischenstand im Chat reicht 1080p, ohne Zoom ist kein Unterschied zu sehen; „Original“ behält jeden Pixel.",
 
     "toast.dismiss": "Schließen",
 

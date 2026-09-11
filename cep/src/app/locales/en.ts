@@ -92,6 +92,10 @@ export const dict: Record<string, string> = {
     "watermark.dialog.hint": "Style, position, size and opacity come from Settings.",
     "settings.clipboardWatermark": "Mark the copied canvas",
     "settings.clipboardWatermark.hint": "Whether Copy canvas stamps this mark on what it puts on the clipboard. Off copies the picture as it stands.",
+    "settings.clipboardResolution": "Copied canvas size",
+    "settings.clipboardResolution.original": "Original",
+    "settings.clipboardResolution.hint":
+        "How big Copy canvas makes what it puts on the clipboard. Same rule as the recording resolution: about the pixels of a 16:9 frame that tall, and a smaller canvas is copied as it is. 1080p is plenty for a progress shot in a chat window; Original keeps every pixel.",
 
     "toast.dismiss": "Dismiss",
 

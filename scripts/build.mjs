@@ -105,6 +105,7 @@ const TEST_ENTRIES = {
     watermark: "cep/src/app/components/Watermark.tsx",
     update: "generator/src/update.ts",
     stale: "shared/stale.ts",
+    fit: "shared/fit.ts",
     zip: "generator/src/zip.ts",
     trash: "generator/src/trash.ts",
     housekeeping: "generator/src/housekeeping.ts"

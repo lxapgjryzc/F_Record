@@ -10,6 +10,7 @@
  *   - close and reopen the document    (PSD copy intact)
  *   - restart Photoshop, then reopen   (only the on-disk index survives)
  *   - a brand new document of the same size as an old recording
+ *   - a file name reused for a different drawing (the index must not bite)
  */
 
 import { test } from "node:test";
@@ -905,26 +906,128 @@ test("an id pointing at a folder that has gone loses to the file's own recording
     assert.equal(again.session.manifest.frameCount, 7);
 });
 
-test("an id pointing at a folder with no manifest loses to the file's own recording", async (t) => {
+/* ------------------------------------------- a name is not a drawing */
+
+// The index remembers which file a recording was of. A file name, though, is
+// reused far more readily than a drawing is: a new piece saved over an old
+// one, a copy dropped over another in Explorer. Each of these once attached
+// the document to a recording of something else, silently.
+
+test("a recorded file copied over another recording's file keeps its own recording", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    // Two drawings, two recordings, each stamped into its own file.
+    s.ps.setActive(1);
+    const dragon = await s.resolver.resolve({ id: 1, file: "C:\\art\\dragon.psd", bounds: BOUNDS }, s.config, true);
+    writeFrames(s.config, dragon.session.sessionId, 5);
+    const stampedIntoDragon = s.ps.peek(1);
+    s.ps.setActive(2);
+    const study = await s.resolver.resolve({ id: 2, file: "C:\\art\\study.psd", bounds: BOUNDS }, s.config, true);
+    writeFrames(s.config, study.session.sessionId, 9);
+    s.ps.close(1);
+    s.ps.close(2);
+    s.resolver.forgetDocument(1);
+    s.resolver.forgetDocument(2);
+
+    // In Explorer, dragon.psd is copied over study.psd. What opens under
+    // study's name is the dragon, and its own settings say so.
+    s.ps.setActive(3);
+    s.ps.setSettings(3, stampedIntoDragon);
+    const opened = await s.resolver.resolve({ id: 3, file: "C:\\art\\study.psd", bounds: BOUNDS }, s.config, true);
+
+    assert.equal(opened.session.sessionId, dragon.session.sessionId, "the id in the file outranks the file's history");
+    assert.equal(opened.session.manifest.frameCount, 5);
+    assert.equal(s.ps.peek(3).sessionId, dragon.session.sessionId, "and nothing rewrites it");
+    assert.ok(!s.logs.some((line) => /^warn/.test(line)), "nothing was 'repaired'");
+});
+
+test("a new document saved over an old recording's file does not inherit its recording", async (t) => {
+    const s = setup();
+    t.after(() => s.temp.cleanup());
+
+    // Yesterday's sketch, closed and done with.
+    s.ps.setActive(1);
+    const old = await s.resolver.resolve({ id: 1, file: "C:\\art\\sketch.psd", bounds: BOUNDS }, s.config, true);
+    writeFrames(s.config, old.session.sessionId, 30);
+    s.ps.close(1);
+    s.resolver.forgetDocument(1);
+
+    // Today's: a new document, saved under the same name before recording is
+    // switched on. Before the save there is nothing to attach it to ...
+    s.ps.setActive(2);
+    const untitled = await s.resolver.resolve({ id: 2, file: "Untitled-1", bounds: BOUNDS }, s.config, false);
+    assert.equal(untitled.session, null);
+
+    // ... and after it there still is not: the name's history belongs to the
+    // sketch this document has just replaced.
+    const saved = await s.resolver.resolve({ id: 2, file: "C:\\art\\sketch.psd", bounds: BOUNDS }, s.config, false);
+    assert.equal(saved.session, null, "the old recording is not adopted");
+    assert.equal(
+        saved.candidates[0].sessionId,
+        old.session.sessionId,
+        "though it is offered, as any recording on the same canvas would be"
+    );
+
+    // Recording switched on: a recording of its own.
+    const recording = await s.resolver.resolve({ id: 2, file: "C:\\art\\sketch.psd", bounds: BOUNDS }, s.config, true);
+    assert.notEqual(recording.session.sessionId, old.session.sessionId);
+    assert.equal(recording.session.isNew, true);
+    assert.equal(
+        fs.readdirSync(old.session.folder).filter((f) => f.endsWith(".jpg")).length,
+        30,
+        "and yesterday's sketch is left as it was"
+    );
+});
+
+test("after a restart, the index recovers a file only on the canvas it recorded", async (t) => {
+    const s = setup("run-1");
+    t.after(() => s.temp.cleanup());
+
+    s.ps.setActive(1);
+    const first = await s.resolver.resolve({ id: 1, file: "C:\\art\\poster.psd", bounds: BOUNDS }, s.config, true);
+    writeFrames(s.config, first.session.sessionId, 9);
+
+    // Photoshop restarted, and what opens under the name is 800x600 where
+    // the recording was of a 2000x1500 canvas: a different file has taken
+    // the name. The index cannot tell them apart; the canvas can.
+    const ps2 = makePhotoshop();
+    ps2.setActive(42);
+    const resolver2 = new SessionResolver(ps2.gateway, new SessionIndex("run-2"), () => {});
+    const smaller = { top: 0, left: 0, right: 800, bottom: 600 };
+    const outcome = await resolver2.resolve({ id: 42, file: "C:\\art\\poster.psd", bounds: smaller }, s.config, true);
+
+    assert.notEqual(outcome.session.sessionId, first.session.sessionId, "not the old recording");
+    assert.equal(outcome.session.isNew, true);
+});
+
+test("deleting the take on a document saved over an old file does not hand it the old recording", async (t) => {
     const s = setup();
     t.after(() => s.temp.cleanup());
 
     s.ps.setActive(1);
-    const mine = await s.resolver.resolve({ id: 1, file: "C:\\art\\d2.psd", bounds: BOUNDS }, s.config, true);
-    writeFrames(s.config, mine.session.sessionId, 3);
+    const old = await s.resolver.resolve({ id: 1, file: "C:\\art\\again.psd", bounds: BOUNDS }, s.config, true);
+    writeFrames(s.config, old.session.sessionId, 8);
+    s.ps.close(1);
+    s.resolver.forgetDocument(1);
 
+    // A new document, recorded from the start, then saved under the old name.
     s.ps.setActive(2);
-    const other = await s.resolver.resolve({ id: 2, file: "Untitled-9", bounds: BOUNDS }, s.config, true);
-    fs.rmSync(path.join(other.session.folder, "session.json"));
-    s.ps.close(2);
+    const fresh = await s.resolver.resolve({ id: 2, file: "Untitled-2", bounds: BOUNDS }, s.config, true);
+    s.ps.wipeSettings(2);
+    const saved = await s.resolver.resolve({ id: 2, file: "C:\\art\\again.psd", bounds: BOUNDS }, s.config, true);
+    assert.equal(saved.session.sessionId, fresh.session.sessionId, "precondition: its own recording survives the save");
 
-    // Document 1 now carries an id whose folder is there but says nothing.
-    s.ps.setSettings(1, { sessionId: other.session.sessionId });
-    s.ps.setActive(1);
+    // The artist throws that take away from the panel. The plug-in forgets
+    // the document and asks again with recording off, the PSD still naming
+    // the deleted take. Forgetting a document does not change where it came
+    // from: this one was never opened from again.psd.
+    fs.rmSync(fresh.session.folder, { recursive: true, force: true });
+    s.index.remove(fresh.session.sessionId);
+    s.resolver.forgetDocument(2);
+    const after = await s.resolver.resolve({ id: 2, file: "C:\\art\\again.psd", bounds: BOUNDS }, s.config, false);
 
-    const again = await s.resolver.resolve({ id: 1, file: "C:\\art\\d2.psd", bounds: BOUNDS }, s.config, true);
-    assert.equal(again.session.sessionId, mine.session.sessionId, "the one that claims the file wins");
-    assert.equal(s.ps.peek(1).sessionId, mine.session.sessionId, "and the document is repaired");
+    assert.equal(after.session, null, "still a new piece, not the one the name used to belong to");
 });
 
 test("a manifest written before file paths were recorded gains one", async (t) => {

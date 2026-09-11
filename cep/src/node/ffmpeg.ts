@@ -23,13 +23,19 @@ import {
     selectFrames,
     sequenceSeconds,
     speedForTarget,
+    stillSize,
     tileWatermarkText,
     DEFAULT_FPS,
     INTRO_SECONDS,
     OUTRO_SECONDS
 } from "./export";
 import { FFMPEG_ENV_VAR, FONT_ENV_VAR, ffmpegCandidates, fontCandidates } from "./locate";
-import { WatermarkSettings, normalizeWatermark, watermarkDraws } from "../../../shared/protocol";
+import {
+    ClipboardResolution,
+    WatermarkSettings,
+    normalizeWatermark,
+    watermarkDraws
+} from "../../../shared/protocol";
 import { clipboardTempDir, exportTempDir } from "../../../shared/paths";
 import { assign, mkdirp, rmrf, writeFileAtomic } from "../../../shared/compat";
 
@@ -233,6 +239,8 @@ export interface StillRequest {
     sourcePath: string;
     /** Where the marked PNG goes. */
     outputPath: string;
+    /** How big it comes out; see stillSize. */
+    resolution: ClipboardResolution;
     /** Stamped on the still. Null, or kind "off", leaves it unmarked. */
     watermark: WatermarkSettings | null;
 }
@@ -259,9 +267,10 @@ export function runStillWatermark(request: StillRequest): Promise<void> {
             return;
         }
 
-        // The mark is sized against the picture, so the picture has to be
-        // measured first -- and if Photoshop's still is unreadable, saying so
-        // here beats letting ffmpeg fail on it further down.
+        // The copy is cut down from the picture and the mark is sized against
+        // the copy, so the picture has to be measured first -- and if
+        // Photoshop's still is unreadable, saying so here beats letting ffmpeg
+        // fail on it further down.
         let size: { width: number; height: number } | null = null;
         try {
             size = jpegSize(fs.readFileSync(request.sourcePath));
@@ -284,9 +293,12 @@ export function runStillWatermark(request: StillRequest): Promise<void> {
             return;
         }
 
+        const target = stillSize(size, request.resolution);
         const args = buildStillArgs({
-            width: size.width,
-            height: size.height,
+            width: target.width,
+            height: target.height,
+            sourceWidth: size.width,
+            sourceHeight: size.height,
             // Nothing here is timed; the emboss style builds its relief on a
             // synthetic source that needs a rate all the same.
             fps: 1,

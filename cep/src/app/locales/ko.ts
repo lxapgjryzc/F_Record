@@ -88,6 +88,9 @@ export const dict: Record<string, string> = {
     "watermark.dialog.hint": "스타일, 위치, 크기, 불투명도는 설정에서 정합니다.",
     "settings.clipboardWatermark": "복사하는 화면에 워터마크 넣기",
     "settings.clipboardWatermark.hint": "「화면 복사」가 클립보드에 넣는 그림에 워터마크를 넣을지 여부. 끄면 그림 그대로 복사합니다.",
+    "settings.clipboardResolution": "복사하는 화면의 해상도",
+    "settings.clipboardResolution.original": "원본",
+    "settings.clipboardResolution.hint": "「화면 복사」가 클립보드에 넣는 그림의 크기. 기준은 녹화 해상도와 같아서 그 높이의 16:9 한 프레임만큼의 화소가 되고, 그보다 작은 캔버스는 그대로 복사합니다. 진행 상황을 보여주기엔 1080p면 충분하고 확대하지 않으면 차이가 보이지 않습니다. 모든 화소가 필요하면 「원본」을 고르세요.",
 
     "toast.dismiss": "닫기",
 

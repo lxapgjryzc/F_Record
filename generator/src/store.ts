@@ -14,8 +14,10 @@ import {
     Bounds,
     FrameFormat,
     LANGUAGES,
+    RESOLUTIONS,
     Resolution,
     SessionSummary,
+    normalizeClipboardResolution,
     normalizeWatermark,
     normalizeExportDefaults
 } from "../../shared/protocol";
@@ -127,8 +129,6 @@ export class ConfigStore {
     }
 }
 
-const RESOLUTIONS: Resolution[] = ["360", "720", "1080", "1440", "2160"];
-
 export function normalizeConfig(config: Config): Config {
     const out = assign({} as Config, config);
 
@@ -171,6 +171,7 @@ export function normalizeConfig(config: Config): Config {
     // Absent means a config written before this setting existed, and the
     // default is on -- so only an explicit `false` turns it off.
     out.clipboardWatermark = out.clipboardWatermark !== false;
+    out.clipboardResolution = normalizeClipboardResolution(out.clipboardResolution);
     // Same reasoning: a fresh object every time, so nothing stored can end up
     // sharing DEFAULT_CONFIG's copy and editing the default through it.
     out.exportDefaults = normalizeExportDefaults(out.exportDefaults);

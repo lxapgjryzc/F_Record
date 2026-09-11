@@ -182,6 +182,23 @@ test("the copy button is signed unless someone says otherwise", () => {
     assert.deepEqual(declined.patches, [{ clipboardWatermark: true }]);
 });
 
+test("the copied canvas is offered at the recording's sizes plus the original, cut down by default", () => {
+    const { container, patches } = settings({});
+    const select = selectFor(container, "settings.clipboardResolution");
+    assert.deepEqual(optionsOf(select), ["360", "720", "1080", "1440", "2160", "original"]);
+    assert.equal(labelsOf(select)[2], "1080p", "the recording's own words");
+    assert.equal(labelsOf(select).pop(), t("settings.clipboardResolution.original"));
+    // The button is for progress shots, so the default is well under the canvas.
+    assert.equal(select.value, "1080");
+    choose(select, "original");
+    assert.deepEqual(patches, [{ clipboardResolution: "original" }]);
+});
+
+test("a generator too old to know about the copy size shows the default rather than a blank box", () => {
+    const { container } = settings({ clipboardResolution: undefined });
+    assert.equal(selectFor(container, "settings.clipboardResolution").value, "1080");
+});
+
 /* ------------------------------------------------------------- starting up */
 
 test("both automatic starts are switches, and each says what it does", () => {

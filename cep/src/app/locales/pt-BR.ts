@@ -90,6 +90,9 @@ export const dict: Record<string, string> = {
     "watermark.dialog.hint": "Estilo, posição, tamanho e opacidade vêm das Configurações.",
     "settings.clipboardWatermark": "Marcar a imagem copiada",
     "settings.clipboardWatermark.hint": "Se «Copiar imagem» aplica a marca no que vai para a área de transferência. Desligado, copia a imagem como está.",
+    "settings.clipboardResolution": "Tamanho da imagem copiada",
+    "settings.clipboardResolution.original": "Original",
+    "settings.clipboardResolution.hint": "Quão grande é o que «Copiar imagem» coloca na área de transferência. A mesma regra da resolução de gravação: mais ou menos os pixels de um quadro 16:9 dessa altura, e uma tela menor é copiada como está. Para mostrar o andamento num chat 1080p basta, sem ampliar não se nota diferença; «Original» mantém cada pixel.",
 
     "toast.dismiss": "Fechar",
 

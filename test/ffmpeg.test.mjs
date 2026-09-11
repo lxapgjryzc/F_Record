@@ -331,8 +331,11 @@ test("the one ffmpeg error worth translating is the build without freetype", () 
 
 /* ------------------------------------------------------- stamping one still */
 
-/** A source JPEG plus an isolated data directory, ready for a still run. */
-function stillFixture(t) {
+/**
+ * A source JPEG plus an isolated data directory, ready for a still run, and
+ * the request the panel would send for it: the original size, nothing drawn.
+ */
+function stillFixture(t, { width = 800, height = 600 } = {}) {
     const env = withIsolatedAppDir();
     const temp = tempDir();
     t.after(() => {
@@ -341,8 +344,20 @@ function stillFixture(t) {
         clearFaults();
     });
     const source = path.join(temp.dir, "canvas.jpg");
-    fs.writeFileSync(source, jpeg(800, 600));
-    return { env, temp, source, outputPath: path.join(temp.dir, "canvas.png") };
+    fs.writeFileSync(source, jpeg(width, height));
+    const outputPath = path.join(temp.dir, "canvas.png");
+    return {
+        env,
+        temp,
+        source,
+        outputPath,
+        request: { sourcePath: source, outputPath: outputPath, resolution: "original", watermark: null }
+    };
+}
+
+/** The filter graph a spawned ffmpeg was handed. */
+function filterOf(spawned) {
+    return spawned.args[spawned.args.indexOf("-filter_complex") + 1];
 }
 
 test("a still cannot be stamped without an ffmpeg, and says so in those words", async (t) => {
@@ -350,7 +365,7 @@ test("a still cannot be stamped without an ffmpeg, and says so in those words", 
     setFault("existsSync", () => false);
 
     await assert.rejects(
-        ffmpeg.runStillWatermark({ sourcePath: f.source, outputPath: f.outputPath, watermark: null }),
+        ffmpeg.runStillWatermark(f.request),
         /ffmpeg was not found, so the watermark could not be drawn\./
     );
 });
@@ -360,18 +375,13 @@ test("a still Photoshop wrote badly is reported before ffmpeg is asked to read i
     ffmpegAt(WINDOWS_FFMPEG);
     fs.writeFileSync(f.source, "not a jpeg at all");
 
-    // The mark is sized against the picture, so the picture has to be measured
-    // first -- and saying so here beats letting ffmpeg fail on it further down.
-    await assert.rejects(
-        ffmpeg.runStillWatermark({ sourcePath: f.source, outputPath: f.outputPath, watermark: null }),
-        /could not be read/
-    );
+    // The copy is cut down from the picture and the mark sized against the
+    // copy, so the picture has to be measured first -- and saying so here
+    // beats letting ffmpeg fail on it further down.
+    await assert.rejects(ffmpeg.runStillWatermark(f.request), /could not be read/);
 
     fs.rmSync(f.source);
-    await assert.rejects(
-        ffmpeg.runStillWatermark({ sourcePath: f.source, outputPath: f.outputPath, watermark: null }),
-        /could not be read/
-    );
+    await assert.rejects(ffmpeg.runStillWatermark(f.request), /could not be read/);
 });
 
 test("a watermark that cannot be prepared stops the still before it is spawned", async (t) => {
@@ -381,8 +391,7 @@ test("a watermark that cannot be prepared stops the still before it is spawned",
 
     await assert.rejects(
         ffmpeg.runStillWatermark({
-            sourcePath: f.source,
-            outputPath: f.outputPath,
+            ...f.request,
             watermark: { kind: "image", imagePath: path.join(f.temp.dir, "gone.png") }
         }),
         /The watermark image is no longer at /
@@ -395,11 +404,7 @@ test("a still that ffmpeg writes resolves once, with no window shown", async (t)
     const child = fakeFfmpeg();
     ffmpegAt(WINDOWS_FFMPEG);
 
-    const done = ffmpeg.runStillWatermark({
-        sourcePath: f.source,
-        outputPath: f.outputPath,
-        watermark: null
-    });
+    const done = ffmpeg.runStillWatermark({ ...f.request, resolution: "1080" });
     child.exit(0);
     await done;
 
@@ -408,6 +413,34 @@ test("a still that ffmpeg writes resolves once, with no window shown", async (t)
     // The picture goes in and the marked copy comes out.
     assert.ok(child.spawned[0].args.indexOf(f.source) !== -1, "the still is the input");
     assert.ok(child.spawned[0].args.indexOf(f.outputPath) !== -1);
+    // 800x600 is inside a 1080p budget, so there is nothing to cut down.
+    assert.ok(!filterOf(child.spawned[0]).includes("scale="), "a small canvas is never blown up");
+});
+
+test("a canvas bigger than the size asked for is cut down, by the recording's own rule", async (t) => {
+    const f = stillFixture(t, { width: 4000, height: 3000 });
+    const child = fakeFfmpeg();
+    ffmpegAt(WINDOWS_FFMPEG);
+
+    const done = ffmpeg.runStillWatermark({ ...f.request, resolution: "1080" });
+    child.exit(0);
+    await done;
+
+    // The size a 1080p recording of this canvas is captured at, so the copy
+    // is exactly a frame's worth.
+    assert.ok(filterOf(child.spawned[0]).includes("scale=1663:1247:flags=lanczos"));
+});
+
+test("the original is copied as it stands", async (t) => {
+    const f = stillFixture(t, { width: 4000, height: 3000 });
+    const child = fakeFfmpeg();
+    ffmpegAt(WINDOWS_FFMPEG);
+
+    const done = ffmpeg.runStillWatermark(f.request);
+    child.exit(0);
+    await done;
+
+    assert.ok(!filterOf(child.spawned[0]).includes("scale="));
 });
 
 test("an ffmpeg that will not start is told apart from one that failed", async (t) => {
@@ -415,7 +448,7 @@ test("an ffmpeg that will not start is told apart from one that failed", async (
     const child = fakeFfmpeg();
     ffmpegAt(WINDOWS_FFMPEG);
 
-    const done = ffmpeg.runStillWatermark({ sourcePath: f.source, outputPath: f.outputPath, watermark: null });
+    const done = ffmpeg.runStillWatermark(f.request);
     child.fail(new Error("spawn ENOENT"));
     await assert.rejects(done, /^Error: Could not run ffmpeg: spawn ENOENT$/);
 });
@@ -425,7 +458,7 @@ test("a still ffmpeg refused comes back with what it printed", async (t) => {
     const child = fakeFfmpeg();
     ffmpegAt(WINDOWS_FFMPEG);
 
-    const done = ffmpeg.runStillWatermark({ sourcePath: f.source, outputPath: f.outputPath, watermark: null });
+    const done = ffmpeg.runStillWatermark(f.request);
     child.say("Invalid data found");
     child.exit(1);
     await assert.rejects(done, /ffmpeg exited with code 1: Invalid data found/);

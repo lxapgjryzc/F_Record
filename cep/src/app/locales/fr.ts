@@ -90,6 +90,9 @@ export const dict: Record<string, string> = {
     "watermark.dialog.hint": "Le style, la position, la taille et l'opacité viennent des réglages.",
     "settings.clipboardWatermark": "Filigraner l’image copiée",
     "settings.clipboardWatermark.hint": "Si « Copier l’image » appose la marque sur ce qui part dans le presse-papiers. Désactivé, l’image est copiée telle quelle.",
+    "settings.clipboardResolution": "Taille de l’image copiée",
+    "settings.clipboardResolution.original": "Taille d’origine",
+    "settings.clipboardResolution.hint": "Taille de ce que « Copier l’image » place dans le presse-papiers. Même règle que la résolution d’enregistrement : à peu près les pixels d’une image 16:9 de cette hauteur, et une toile plus petite est copiée telle quelle. 1080p suffit largement pour montrer l’avancement dans une discussion, sans zoom la différence est invisible ; « Taille d’origine » garde chaque pixel.",
 
     "toast.dismiss": "Fermer",
 

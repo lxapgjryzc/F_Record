@@ -8,7 +8,8 @@ import {
     DeleteItem,
     ISSUES_URL,
     SessionSummary,
-    State
+    State,
+    normalizeClipboardResolution
 } from "../../../shared/protocol";
 import { StaleCriteria, staleSessions } from "../../../shared/stale";
 import { BridgeClient, ConnectionStatus } from "./bridge";
@@ -470,6 +471,10 @@ export function App(): JSX.Element {
             await runStillWatermark({
                 sourcePath: source,
                 outputPath: marked,
+                // Normalised rather than read: a generator that predates the
+                // setting sends nothing, and the answer is then the cut-down
+                // copy the button is for, not a full-size one.
+                resolution: normalizeClipboardResolution(state && state.config.clipboardResolution),
                 // Null is "copy it as it stands". `!== false` rather than a
                 // plain read, so a config from a generator that predates the
                 // setting still marks the copy, which is the default.

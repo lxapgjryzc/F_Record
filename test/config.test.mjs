@@ -13,9 +13,11 @@ import assert from "node:assert/strict";
 
 import { normalizeConfig } from "../dist/modules/store.mjs";
 import {
+    CLIPBOARD_RESOLUTIONS,
     DEFAULT_CONFIG,
     DEFAULT_EXPORT_DEFAULTS,
     DEFAULT_WATERMARK,
+    normalizeClipboardResolution,
     normalizeExportDefaults,
     normalizeWatermark,
     watermarkDraws
@@ -204,4 +206,27 @@ test("only an explicit false turns the clipboard mark off", () => {
     // because it is not the boolean false.
     assert.equal(normalizeConfig(legacyConfig({ clipboardWatermark: "no" })).clipboardWatermark, true);
     assert.equal(normalizeConfig(legacyConfig({ clipboardWatermark: null })).clipboardWatermark, true);
+});
+
+/* --------------------------------------------------------- clipboard size */
+
+test("a config that predates the clipboard size copies at 1080p", () => {
+    // The button is for progress shots and the clipboard holds raw pixels, so
+    // the default is well under the canvas rather than the whole of it.
+    assert.equal(normalizeConfig(legacyConfig()).clipboardResolution, "1080");
+    assert.equal(DEFAULT_CONFIG.clipboardResolution, "1080");
+});
+
+test("the copy is offered at every recording size, plus the original, and each survives storage", () => {
+    assert.deepEqual(CLIPBOARD_RESOLUTIONS, ["360", "720", "1080", "1440", "2160", "original"]);
+    for (const value of CLIPBOARD_RESOLUTIONS) {
+        assert.equal(normalizeConfig(legacyConfig({ clipboardResolution: value })).clipboardResolution, value);
+    }
+});
+
+test("a hand-edited clipboard size is read as its digits, and nonsense lands on the default", () => {
+    assert.equal(normalizeClipboardResolution(720), "720");
+    assert.equal(normalizeClipboardResolution("4k"), "1080");
+    assert.equal(normalizeClipboardResolution(undefined), "1080");
+    assert.equal(normalizeClipboardResolution(null), "1080");
 });

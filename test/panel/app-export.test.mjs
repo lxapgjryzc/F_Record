@@ -364,6 +364,24 @@ test("a generator too old to know about the setting still signs the copy", async
     assert.ok(panel.media.stills[0].watermark, "which is the default");
 });
 
+test("the copy is cut down to the size chosen in Settings", async () => {
+    const container = await openPanel(
+        panelState({ config: { ...panelState().config, clipboardResolution: "720" } })
+    );
+    click(copyButton(container));
+    await dom.flush();
+    assert.equal(panel.media.stills[0].resolution, "720");
+});
+
+test("a generator too old to know about the size gets the 1080p copy the button is for", async () => {
+    const config = { ...panelState().config };
+    delete config.clipboardResolution;
+    const container = await openPanel(panelState({ config }));
+    click(copyButton(container));
+    await dom.flush();
+    assert.equal(panel.media.stills[0].resolution, "1080", "the default, not a full-size copy by accident");
+});
+
 test("copying pauses the recording too, and puts it back", async () => {
     const container = await openPanel();
     click(copyButton(container));

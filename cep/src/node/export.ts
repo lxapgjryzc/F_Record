@@ -20,8 +20,10 @@
  * see test/export.test.mjs.
  */
 
+import { fitToResolution } from "../../../shared/fit";
 import { ParsedFrame, parseFrameList, parseLegacyFrameFileName } from "../../../shared/paths";
 import {
+    ClipboardResolution,
     WatermarkPosition,
     WatermarkStyle,
     WATERMARK_EMBOSS_SIZE_MIN,
@@ -225,6 +227,33 @@ export interface FfmpegPlan extends WatermarkCanvas {
 export interface StillPlan extends WatermarkCanvas {
     sourcePath: string;
     outputPath: string;
+    /**
+     * The size of the picture at `sourcePath`. `width` x `height` is the size
+     * it comes out at; when the two differ it is scaled down on the way in,
+     * before the mark goes on. See stillSize.
+     */
+    sourceWidth: number;
+    sourceHeight: number;
+}
+
+/**
+ * How big the clipboard copy comes out.
+ *
+ * The button exists to hand someone a look at the work in progress, not to
+ * move the artwork, and a 6000-pixel canvas on the clipboard is a hundred-odd
+ * megabytes of bitmap that every chat window then has to swallow. So it is
+ * cut down to a resolution -- the recording's own words and the recording's
+ * own rule, so "1080p" here is exactly the size of a recorded frame -- unless
+ * the original is asked for. Never upscaled either way.
+ */
+export function stillSize(
+    source: { width: number; height: number },
+    resolution: ClipboardResolution
+): { width: number; height: number } {
+    if (resolution === "original") {
+        return { width: source.width, height: source.height };
+    }
+    return fitToResolution(source.width, source.height, resolution);
 }
 
 /** Mark height and margin in pixels, for a given output height. */
@@ -714,10 +743,12 @@ export function buildFfmpegArgs(plan: FfmpegPlan): string[] {
  * the code that draws the mark on an export -- same style, same tiling, same
  * relief -- rather than by a second implementation that would drift.
  *
- * The still keeps its own size: nothing is scaled or padded, because there is
- * no fixed frame to fit here and the point of copying the canvas is to get the
- * canvas. `-update 1` is what lets a single .png be an output file rather than
- * the first entry of an image sequence.
+ * Nothing is padded: there is no fixed frame to fit here, and the still keeps
+ * the canvas's shape. It is scaled down when the plan is smaller than the
+ * source -- see stillSize -- and the mark goes on afterwards, so it is sized
+ * against what lands on the clipboard, in the proportion it has on the video.
+ * `-update 1` is what lets a single .png be an output file rather than the
+ * first entry of an image sequence.
  */
 export function buildStillArgs(plan: StillPlan): string[] {
     const args: string[] = ["-hide_banner", "-loglevel", "error", "-y", "-i", plan.sourcePath];
@@ -728,7 +759,15 @@ export function buildStillArgs(plan: StillPlan): string[] {
     }
 
     const body = watermark ? "body" : "out";
-    let filter = "[0:v]format=" + plan.workingFormat + ",setsar=1[" + body + "]";
+    // Full chroma before the scale: a JPEG can carry its colour at half
+    // resolution, and scaling the picture once it is all at one resolution is
+    // what keeps a drawing's edges clean rather than fringed. Lanczos because
+    // this is line art being made smaller, and bilinear would soften it.
+    let filter = "[0:v]format=" + plan.workingFormat;
+    if (plan.width !== plan.sourceWidth || plan.height !== plan.sourceHeight) {
+        filter += ",scale=" + plan.width + ":" + plan.height + ":flags=lanczos";
+    }
+    filter += ",setsar=1[" + body + "]";
     if (watermark) {
         filter += ";" + buildWatermarkFilter(plan, body, "out", 1);
     }

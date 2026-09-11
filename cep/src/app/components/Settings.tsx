@@ -1,10 +1,14 @@
 import { JSX } from "preact";
 import {
+    CLIPBOARD_RESOLUTIONS,
+    ClipboardResolution,
     Config,
     LANGUAGES,
     Language,
+    RESOLUTIONS,
     Resolution,
     WatermarkSettings,
+    normalizeClipboardResolution,
     normalizeWatermark
 } from "../../../../shared/protocol";
 import { Translate } from "../i18n";
@@ -25,8 +29,6 @@ export interface SettingsProps {
     /** The generator process's Node, over the bridge. Null when disconnected. */
     generatorNode: string | null;
 }
-
-const RESOLUTIONS: Resolution[] = ["360", "720", "1080", "1440", "2160"];
 
 export function Settings(props: SettingsProps): JSX.Element {
     const t = props.t;
@@ -174,6 +176,37 @@ export function Settings(props: SettingsProps): JSX.Element {
                         <Hint>{t("settings.clipboardWatermark.hint")}</Hint>
                     </>
                 )}
+            </div>
+
+            {/*
+              * How big "Copy canvas" makes its copy. The button is for
+              * showing someone where the work stands, and the clipboard holds
+              * raw pixels, so the default is well under the canvas. The
+              * choices are the recording's own resolutions because it is the
+              * recording's own rule behind them: 1080p here is exactly the
+              * size of a 1080p frame. Normalised for the same reason the
+              * watermark is -- a generator too old to know the setting sends
+              * none, and the box should show the default rather than nothing.
+              */}
+            <div class="section">
+                <Row label={t("settings.clipboardResolution")}>
+                    <Select
+                        ariaLabel={t("settings.clipboardResolution")}
+                        value={normalizeClipboardResolution(config.clipboardResolution)}
+                        disabled={props.disabled}
+                        options={CLIPBOARD_RESOLUTIONS.map((value) => ({
+                            value: value,
+                            label:
+                                value === "original"
+                                    ? t("settings.clipboardResolution.original")
+                                    : value + "p"
+                        }))}
+                        onChange={(value) =>
+                            props.onPatch({ clipboardResolution: value as ClipboardResolution })
+                        }
+                    />
+                </Row>
+                <Hint>{t("settings.clipboardResolution.hint")}</Hint>
             </div>
 
             <div class="section">
