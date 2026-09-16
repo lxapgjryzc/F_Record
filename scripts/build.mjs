@@ -1,4 +1,3 @@
-// Incremental module build; installable panel packaging is added after the UI.
 /**
  * Builds every artifact the installer needs.
  *
@@ -117,10 +116,6 @@ const TEST_ENTRIES = {
     trash: "generator/src/trash.ts",
     housekeeping: "generator/src/housekeeping.ts"
 };
-
-for (const [name, file] of Object.entries(TEST_ENTRIES)) {
-    if (!fs.existsSync(path.join(root, file))) delete TEST_ENTRIES[name];
-}
 
 /**
  * Leaves imports between modules under test as imports.
@@ -282,9 +277,7 @@ function emitEs5() {
 
     // main.tsx imports the stylesheet beside it; tsc keeps the import and
     // leaves the file behind.
-    if (fs.existsSync(path.join(root, "cep/src/app/styles.css"))) {
-        copyFile(path.join(root, "cep/src/app/styles.css"), path.join(out, "cep/src/app/styles.css"));
-    }
+    copyFile(path.join(root, "cep/src/app/styles.css"), path.join(out, "cep/src/app/styles.css"));
     log("emitted ES5 sources -> dist/es5");
 }
 
@@ -341,12 +334,167 @@ async function buildGenerator() {
  * The panel builds, oldest host first. `es5` means the bundle is made from the
  * tsc output rather than straight from the source; see emitEs5.
  */
+const PANEL_VARIANTS = [
+    { name: "classic", es5: true, target: "es5" },
+    { name: "legacy", es5: false, target: "chrome57" },
+    { name: "modern", es5: false, target: "chrome74" }
+];
+
+async function buildPanel(variant) {
+    const out = path.join(dist, "cep-" + variant.name, CEP_FOLDER);
+    rmrf(out);
+    mkdirp(out);
+
+    await esbuild.build({
+        entryPoints: [
+            variant.es5 ? path.join(dist, "es5/cep/src/app/main.js") : path.join(root, "cep/src/app/main.tsx")
+        ],
+        outfile: path.join(out, "panel.js"),
+        bundle: true,
+        // The panel runs in CEF but with Node enabled and `require` available
+        // as a global, so Node's builtins must stay as runtime requires rather
+        // than being bundled or shimmed.
+        platform: "node",
+        format: "iife",
+        target: variant.target,
+        jsx: "automatic",
+        jsxImportSource: "preact",
+        define: { __PLUGIN_VERSION__: JSON.stringify(VERSION) },
+        ...(variant.es5 ? MINIFY_ES5 : MINIFY),
+        logLevel: "warning"
+    });
+
+    // esbuild names the extracted stylesheet after the JS outfile.
+    const producedCss = path.join(out, "panel.css");
+    if (!fs.existsSync(producedCss)) {
+        throw new Error("expected panel.css to be emitted next to panel.js");
+    }
+
+    copyFile(path.join(root, "cep/src/index.html"), path.join(out, "index.html"));
+    copyFile(path.join(root, "cep/src/host/init.jsx"), path.join(out, "host/init.jsx"));
+    copyFile(path.join(root, "cep/src/js/CSInterface.js"), path.join(out, "js/CSInterface.js"));
+    // The panel icon in the four states CEP asks for, each with its @2X. The
+    // 256 px rendering is for the README and stays out of the package.
+    for (const icon of fs.readdirSync(path.join(root, "cep/src/icons"))) {
+        if (icon.endsWith(".png") && !icon.startsWith("icon-")) {
+            copyFile(path.join(root, "cep/src/icons", icon), path.join(out, "icons", icon));
+        }
+    }
+    // The manifest carries the version twice and CEP compares it against what
+    // is already installed, so a stale number there means an upgrade can be
+    // silently ignored. package.json is the single source of truth; stamp it in
+    // rather than trusting whoever last edited the XML to remember both places.
+    const manifestSource = path.join(root, "cep/src/CSXS/manifest." + variant.name + ".xml");
+    const manifest = fs
+        .readFileSync(manifestSource, "utf8")
+        .replace(/ExtensionBundleVersion="[^"]*"/, 'ExtensionBundleVersion="' + VERSION + '"')
+        .replace(
+            /(<Extension\s+Id="com\.F_know\.F_Record\.panel"\s+Version=")[^"]*(")/,
+            "$1" + VERSION + "$2"
+        );
+    mkdirp(path.join(out, "CSXS"));
+    fs.writeFileSync(path.join(out, "CSXS/manifest.xml"), manifest);
+    // doctor.ps1 reads this to say which build is installed where, rather
+    // than inferring it from the manifest's host range.
+    fs.writeFileSync(
+        path.join(out, "build.json"),
+        JSON.stringify({ variant: variant.name, version: VERSION, target: variant.target }, null, 2) + "\n"
+    );
+
+    log(
+        "built cep-" + variant.name + " (" + variant.target + ") -> dist/cep-" + variant.name +
+        " (" + sizeOf(path.join(out, "panel.js")) + " js, " + sizeOf(producedCss) + " css)"
+    );
+}
+
+/* ----------------------------------------------------------------- extras */
+
+// photoshop.ps1 is dot-sourced by the other three, so leaving it out would
+// break the installer in the release zip while working fine from the repo.
+const SHIPPED_SCRIPTS = [
+    "photoshop.ps1",
+    "install.ps1",
+    "install.cmd",
+    "uninstall.ps1",
+    "uninstall.cmd",
+    "doctor.ps1"
+];
+
+function copyScripts() {
+    const out = path.join(dist, "scripts");
+    rmrf(out);
+    mkdirp(out);
+    for (const name of SHIPPED_SCRIPTS) {
+        const from = path.join(root, "scripts", name);
+        if (!fs.existsSync(from)) {
+            throw new Error("scripts/" + name + " is missing; the release would be broken");
+        }
+        copyFile(from, path.join(out, name));
+    }
+    for (const name of ["README.md", "README_EN.md", "RELEASE_NOTES.md", "docs/DEVELOPMENT.md", "LICENSE"]) {
+        const from = path.join(root, name);
+        if (fs.existsSync(from)) {
+            copyFile(from, path.join(dist, name));
+        }
+    }
+    log("copied installer scripts and docs -> dist/");
+}
+
+function writeZip() {
+    const releaseDir = path.join(root, "release");
+    mkdirp(releaseDir);
+    const archive = path.join(releaseDir, "F_Record-" + VERSION + ".zip");
+    rmrf(archive);
+    // Test bundles and the tsc intermediate are build artifacts, not
+    // something users need.
+    rmrf(path.join(dist, "modules"));
+    rmrf(path.join(dist, "es5"));
+    // Compress-Archive ships with Windows PowerShell, so the release build has
+    // no extra dependency.
+    execFileSync(
+        "powershell.exe",
+        [
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "Compress-Archive -Path '" + dist + "\\*' -DestinationPath '" + archive + "' -Force"
+        ],
+        { stdio: "inherit" }
+    );
+    log("wrote " + archive + " (" + sizeOf(archive) + ")");
+}
+
+/* ------------------------------------------------------------------- main */
 
 async function main() {
-    if (fs.existsSync(path.join(root, "generator/src/index.ts"))) {
+    if (testsOnly) {
+        // The generator bundle too, not just dist/modules: integration.test.mjs
+        // drives the exact file that ships, and building only the test bundles
+        // left it asserting against whatever the last full build produced.
         emitEs5();
         await buildGenerator();
+        await buildTestBundles();
+        return;
     }
+
+    rmrf(dist);
+    emitEs5();
+    await buildGenerator();
+    for (const variant of PANEL_VARIANTS) {
+        await buildPanel(variant);
+    }
+    copyScripts();
     await buildTestBundles();
+
+    if (makeZip) {
+        writeZip();
+    }
+    log("\nbuild complete: dist/");
 }
-main().catch(error => { console.error(error); process.exit(1); });
+
+main().catch((error) => {
+    process.stderr.write(String(error && error.stack ? error.stack : error) + "\n");
+    process.exit(1);
+});

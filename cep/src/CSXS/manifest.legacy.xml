@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Panel manifest for Photoshop CC 2018 through 2020 (19.x-21.x = CEP 8/9,
+  Chromium 57/61, Node 7.7/8.6). Paired with the 'legacy' bundle, which is
+  compiled down to Chromium 57. CC 2015.5-CC 2017 get manifest.classic.xml,
+  2021 and newer manifest.modern.xml; scripts/install.ps1 picks the right one
+  per installation.
+-->
+<ExtensionManifest Version="5.0" ExtensionBundleId="com.F_know.F_Record" ExtensionBundleVersion="4.0.0" ExtensionBundleName="F_Record" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <ExtensionList>
+        <Extension Id="com.F_know.F_Record.panel" Version="4.0.0"/>
+    </ExtensionList>
+    <ExecutionEnvironment>
+        <HostList>
+            <!-- Photoshop CC 2018 (19.0) through 2020 (21.x) -->
+            <Host Name="PHXS" Version="[19.0,21.9]"/>
+            <Host Name="PHSP" Version="[19.0,21.9]"/>
+        </HostList>
+        <LocaleList>
+            <Locale Code="All"/>
+        </LocaleList>
+        <RequiredRuntimeList>
+            <RequiredRuntime Name="CSXS" Version="8.0"/>
+        </RequiredRuntimeList>
+    </ExecutionEnvironment>
+    <DispatchInfoList>
+        <Extension Id="com.F_know.F_Record.panel">
+            <DispatchInfo>
+                <Resources>
+                    <MainPath>./index.html</MainPath>
+                    <ScriptPath>./host/init.jsx</ScriptPath>
+                    <CEFCommandLine>
+                        <Parameter>--enable-nodejs</Parameter>
+                        <Parameter>--mixed-context</Parameter>
+                    </CEFCommandLine>
+                </Resources>
+                <Lifecycle>
+                    <AutoVisible>true</AutoVisible>
+                </Lifecycle>
+                <UI>
+                    <Type>Panel</Type>
+                    <Menu>F_Record</Menu>
+                    <Geometry>
+                        <Size>
+                            <Width>340</Width>
+                            <Height>460</Height>
+                        </Size>
+                        <MinSize>
+                            <Width>300</Width>
+                            <Height>320</Height>
+                        </MinSize>
+                        <MaxSize>
+                            <Width>900</Width>
+                            <Height>1400</Height>
+                        </MaxSize>
+                    </Geometry>
+                    <Icons>
+                        <Icon Type="Normal">./icons/normal.png</Icon>
+                        <Icon Type="RollOver">./icons/rollover.png</Icon>
+                        <Icon Type="DarkNormal">./icons/dark-normal.png</Icon>
+                        <Icon Type="DarkRollOver">./icons/dark-rollover.png</Icon>
+                    </Icons>
+                </UI>
+            </DispatchInfo>
+        </Extension>
+    </DispatchInfoList>
+</ExtensionManifest>
