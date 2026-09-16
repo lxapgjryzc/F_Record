@@ -6,7 +6,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node scripts/build.mjs --tests && node --experimental-test-module-mocks --test --test-timeout=60000 \"test/*.test.mjs\"",
+    "test": "node scripts/build.mjs --tests && node --experimental-test-module-mocks --test --test-timeout=60000 \"test/*.test.mjs\" \"test/panel/*.test.mjs\"",
     "check": "npm run typecheck && npm test"
   },
   "repository": {
