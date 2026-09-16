@@ -1,0 +1,352 @@
+// Incremental module build; installable panel packaging is added after the UI.
+/**
+ * Builds every artifact the installer needs.
+ *
+ * Three CEP bundles come out of one source tree, differing only in how far
+ * the JavaScript is compiled down:
+ *
+ *   classic -> Photoshop CC 2015.5..CC 2017 (CEP 6.1/7, Chromium 41, io.js 1.2)
+ *   legacy  -> Photoshop CC 2018..2020      (CEP 8/9, Chromium 57/61, Node 7.7/8.6)
+ *   modern  -> Photoshop 2021..2026         (CEP 10/11/12, Chromium 74/88/99)
+ *
+ * The CSS is written to the Chromium 41 baseline in every case (cssVars.ts
+ * covers the one thing that baseline cannot express), so the only real
+ * difference is the compile target. scripts/install.ps1 decides which one
+ * each Photoshop installation gets. The generator is one bundle for every
+ * host, compiled to ES5 for the Node 4 that CC 2015.5..CC 2018 run it on.
+ *
+ * Usage:
+ *   node scripts/build.mjs            full build into dist/
+ *   node scripts/build.mjs --tests    just the bundles the test suite imports
+ *   node scripts/build.mjs --zip      full build plus a release archive
+ */
+
+import * as esbuild from "esbuild";
+import ts from "typescript";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const dist = path.join(root, "dist");
+const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+const VERSION = pkg.version;
+
+const CEP_FOLDER = "com.F_know.F_Record.cep";
+const GENERATOR_FOLDER = "com.f_know.f_record.generator";
+
+const args = process.argv.slice(2);
+const testsOnly = args.includes("--tests");
+const makeZip = args.includes("--zip");
+
+/* ------------------------------------------------------------------ utils */
+
+function rmrf(target) {
+    fs.rmSync(target, { recursive: true, force: true });
+}
+
+function mkdirp(target) {
+    fs.mkdirSync(target, { recursive: true });
+}
+
+function copyFile(from, to) {
+    mkdirp(path.dirname(to));
+    fs.copyFileSync(from, to);
+}
+
+function log(message) {
+    process.stdout.write(message + "\n");
+}
+
+function sizeOf(target) {
+    try {
+        return (fs.statSync(target).size / 1024).toFixed(0) + " KB";
+    } catch {
+        return "missing";
+    }
+}
+
+/* ------------------------------------------------------------------ tests */
+
+/**
+ * The test suite runs on plain Node, which cannot import TypeScript with our
+ * extensionless relative imports. Bundling each module under test to ESM keeps
+ * the tests dependency-free and exercises the same code esbuild ships.
+ */
+const TEST_ENTRIES = {
+    index: "generator/src/index.ts",
+    bridge: "generator/src/bridge.ts",
+    logger: "generator/src/logger.ts",
+    capture: "generator/src/capture.ts",
+    framing: "generator/src/framing.ts",
+    session: "generator/src/session.ts",
+    stamp: "generator/src/stamp.ts",
+    store: "generator/src/store.ts",
+    encoder: "generator/src/encoder.ts",
+    compat: "shared/compat.ts",
+    paths: "shared/paths.ts",
+    protocol: "shared/protocol.ts",
+    exportPlan: "cep/src/node/export.ts",
+    clipboard: "cep/src/node/clipboard.ts",
+    locate: "cep/src/node/locate.ts",
+    ffmpeg: "cep/src/node/ffmpeg.ts",
+    // The panel has a bridge of its own; the generator's is `bridge`.
+    panelBridge: "cep/src/app/bridge.ts",
+    i18n: "cep/src/app/i18n.ts",
+    psHost: "cep/src/app/psHost.ts",
+    polyfills: "cep/src/app/polyfills.ts",
+    cssVars: "cep/src/app/cssVars.ts",
+    locales: "cep/src/app/locales/index.ts",
+    // The panel itself. One entry per component for the same reason as
+    // everything else here: a number for App.tsx should be about App.tsx.
+    main: "cep/src/app/main.tsx",
+    app: "cep/src/app/App.tsx",
+    ui: "cep/src/app/components/ui.tsx",
+    dashboard: "cep/src/app/components/Dashboard.tsx",
+    sessionsView: "cep/src/app/components/Sessions.tsx",
+    settingsView: "cep/src/app/components/Settings.tsx",
+    exportDialog: "cep/src/app/components/ExportDialog.tsx",
+    packDialog: "cep/src/app/components/PackDialog.tsx",
+    review: "cep/src/app/components/Review.tsx",
+    watermark: "cep/src/app/components/Watermark.tsx",
+    update: "generator/src/update.ts",
+    stale: "shared/stale.ts",
+    fit: "shared/fit.ts",
+    zip: "generator/src/zip.ts",
+    trash: "generator/src/trash.ts",
+    housekeeping: "generator/src/housekeeping.ts"
+};
+
+for (const [name, file] of Object.entries(TEST_ENTRIES)) {
+    if (!fs.existsSync(path.join(root, file))) delete TEST_ENTRIES[name];
+}
+
+/**
+ * Leaves imports between modules under test as imports.
+ *
+ * Bundling each entry with its dependencies inlined would put four other
+ * modules inside session.mjs, and a coverage report over that file would be
+ * measuring the wrong thing: it could never reach 100% without tests for
+ * every line of everything session.ts happens to import, and a line it did
+ * cover could belong to any of them. One output file per source file keeps
+ * the numbers about the file they are named after. Anything that is not
+ * itself an entry -- the ten locale dictionaries, say -- is still inlined.
+ *
+ * The same reasoning is why coverage is measured over dist/modules and not
+ * over dist/generator/index.js: that bundle inlines every module below it, so
+ * a number for it would be an average over files that are each already
+ * measured here, and reaching 100% on it would mean driving every module's
+ * error paths through a whole running plug-in. The shipped bundle is still
+ * under test -- integration.test.mjs and its neighbours load that exact file
+ * -- it is just not what the percentages are about.
+ */
+function siblingModules() {
+    const bySource = new Map();
+    for (const [name, entry] of Object.entries(TEST_ENTRIES)) {
+        bySource.set(path.resolve(root, entry), "./" + name + ".mjs");
+    }
+    return {
+        name: "sibling-modules",
+        setup(build) {
+            build.onResolve({ filter: /^./ }, (args) => {
+                if (args.kind === "entry-point") {
+                    return null;
+                }
+                const target = path.resolve(args.resolveDir, args.path);
+                // `./locales` is a directory whose index.ts is an entry, so
+                // the index forms are tried too -- without them that entry
+                // would be inlined into whatever imported it and measured
+                // twice, once as itself and once inside its importer.
+                const forms = [
+                    target,
+                    target + ".ts",
+                    target + ".tsx",
+                    path.join(target, "index.ts"),
+                    path.join(target, "index.tsx")
+                ];
+                for (const form of forms) {
+                    const sibling = bySource.get(form);
+                    if (sibling) {
+                        return { path: sibling, external: true };
+                    }
+                }
+                return null;
+            });
+        }
+    };
+}
+
+/**
+ * `dist/modules`, not `dist/test`: node --test treats everything under a
+ * directory called `test` as a test file and leaves it out of the coverage
+ * report, so the modules under test would silently measure nothing.
+ */
+async function buildTestBundles() {
+    const out = path.join(dist, "modules");
+    rmrf(out);
+    mkdirp(out);
+
+    const plugin = siblingModules();
+    for (const [name, entry] of Object.entries(TEST_ENTRIES)) {
+        await esbuild.build({
+            entryPoints: [path.join(root, entry)],
+            outfile: path.join(out, name + ".mjs"),
+            bundle: true,
+            platform: "node",
+            format: "esm",
+            target: "node18",
+            // The panel is preact; the components under test compile the same
+            // way here as they do in the shipped bundle.
+            jsx: "automatic",
+            jsxImportSource: "preact",
+            // The same substitution the shipped bundle gets. Without it the
+            // version would fall back to its dev default, and the test bundle
+            // would be exercising a line the real one never runs.
+            define: { __PLUGIN_VERSION__: JSON.stringify(VERSION) },
+            // main.tsx pulls in the stylesheet, which the shipped bundle
+            // turns into panel.css. There is nothing to measure in it and
+            // nothing to render it here, so it is dropped.
+            loader: { ".css": "empty" },
+            // Dependencies stay imports as well, so a coverage report is
+            // about our code and not about jpeg-js.
+            packages: "external",
+            plugins: [plugin],
+            logLevel: "warning"
+        });
+    }
+    log("built modules under test -> dist/modules");
+}
+
+/* ----------------------------------------------------------------- shared */
+
+/**
+ * Minified, but with names kept.
+ *
+ * `keepNames` costs a little size and buys back the thing this plugin actually
+ * depends on when something goes wrong: readable function names in stack
+ * traces. The whole design is "fail loudly" -- errors are surfaced in the panel
+ * and tailed by doctor.ps1 -- and a mangled trace would gut that. Whitespace
+ * and dead code are the parts worth dropping; identities are not.
+ */
+const MINIFY = {
+    minify: true,
+    keepNames: true,
+    legalComments: "none"
+};
+
+/**
+ * The same, for the ES5 artifacts. keepNames works by assigning to
+ * Function.prototype.name, which an ES5 engine refuses, so there the names
+ * are kept the plain way: identifiers are simply not mangled. A little more
+ * size, the same readable traces.
+ */
+const MINIFY_ES5 = {
+    minifyWhitespace: true,
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    legalComments: "none"
+};
+
+/* -------------------------------------------------------------------- es5 */
+
+/**
+ * The oldest hosts cannot take what esbuild emits.
+ *
+ * Photoshop CC 2015.5 and CC 2017 run Generator on Node 4.3.1 and their panel
+ * on Chromium 41; CC 2018 runs Generator on Node 4.8.4. None of them has
+ * let/const outside strict mode, classes or destructuring, and esbuild
+ * refuses to lower any of those ("not supported yet"). TypeScript does, all
+ * the way to ES5, so the artifacts those hosts load go through tsc first and
+ * esbuild only bundles and minifies what comes out. Same source, same tests;
+ * only the syntax of the file on disk differs.
+ */
+function emitEs5() {
+    const out = path.join(dist, "es5");
+    rmrf(out);
+
+    const configFile = path.join(root, "tsconfig.es5.json");
+    const config = ts.parseJsonConfigFileContent(ts.readConfigFile(configFile, ts.sys.readFile).config, ts.sys, root);
+    const program = ts.createProgram(config.fileNames, config.options);
+    const emitted = program.emit();
+    const diagnostics = ts.getPreEmitDiagnostics(program).concat(emitted.diagnostics);
+    if (diagnostics.length > 0) {
+        throw new Error(
+            ts.formatDiagnostics(diagnostics, {
+                getCanonicalFileName: (file) => file,
+                getCurrentDirectory: () => root,
+                getNewLine: () => "\n"
+            })
+        );
+    }
+
+    // main.tsx imports the stylesheet beside it; tsc keeps the import and
+    // leaves the file behind.
+    if (fs.existsSync(path.join(root, "cep/src/app/styles.css"))) {
+        copyFile(path.join(root, "cep/src/app/styles.css"), path.join(out, "cep/src/app/styles.css"));
+    }
+    log("emitted ES5 sources -> dist/es5");
+}
+
+/* -------------------------------------------------------------- generator */
+
+/**
+ * One bundle for every host. The Generator process runs its own Node, and
+ * which one varies a lot by host: Photoshop 2026 ships Node 22, CC 2015.5
+ * ships 4.3.1. ES5 output (see emitEs5) with every dependency bundled means
+ * the plugin does not care, and the file the test suite drives is the file
+ * every Photoshop loads.
+ */
+async function buildGenerator() {
+    const out = path.join(dist, "generator", GENERATOR_FOLDER);
+    rmrf(out);
+    mkdirp(out);
+
+    await esbuild.build({
+        entryPoints: [path.join(dist, "es5/generator/src/index.js")],
+        outfile: path.join(out, "index.js"),
+        bundle: true,
+        platform: "node",
+        format: "cjs",
+        target: "es5",
+        define: { __PLUGIN_VERSION__: JSON.stringify(VERSION) },
+        ...MINIFY_ES5,
+        logLevel: "warning"
+    });
+
+    fs.writeFileSync(
+        path.join(out, "package.json"),
+        JSON.stringify(
+            {
+                name: "f_record",
+                version: VERSION,
+                author: pkg.author,
+                description: "F_Record capture engine for Photoshop's Generator",
+                main: "index.js",
+                // Photoshop 2020 shipped generator-core 3.x; 2026 ships 3.12.1.
+                // Kept deliberately wide so a future 4.x host still loads us.
+                "generator-core-version": ">=1.0.0 <6.0.0"
+            },
+            null,
+            2
+        ) + "\n"
+    );
+
+    log("built generator -> dist/generator (" + sizeOf(path.join(out, "index.js")) + ")");
+}
+
+/* -------------------------------------------------------------------- cep */
+
+/**
+ * The panel builds, oldest host first. `es5` means the bundle is made from the
+ * tsc output rather than straight from the source; see emitEs5.
+ */
+
+async function main() {
+    if (fs.existsSync(path.join(root, "generator/src/index.ts"))) {
+        emitEs5();
+        await buildGenerator();
+    }
+    await buildTestBundles();
+}
+main().catch(error => { console.error(error); process.exit(1); });

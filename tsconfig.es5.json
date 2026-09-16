@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "target": "ES5",
+    "module": "ES2015",
+    "lib": ["ES2017", "DOM"],
+    "downlevelIteration": true,
+    "noEmit": false,
+    "outDir": "dist/es5",
+    "rootDir": ".",
+    "sourceMap": false,
+    "declaration": false
+  }
+}
