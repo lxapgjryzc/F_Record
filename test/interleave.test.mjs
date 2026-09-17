@@ -47,9 +47,7 @@ function makeWorld() {
     fs.mkdirSync(processImageFolderPath, { recursive: true });
 
     const config = {
-        enabled: true,
         autoStart: false,
-        autoStartNewDocuments: true,
         processImageFolderPath,
         resolution: "1080",
         quality: 70,

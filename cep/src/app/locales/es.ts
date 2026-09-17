@@ -23,12 +23,11 @@ export const dict: Record<string, string> = {
     "record.paused": "En pausa",
     "record.start": "Iniciar grabación",
     "record.stop": "Detener grabación",
+    "record.failing": "Las capturas fallan; reintentando",
 
     "doc.title": "Documento",
     "doc.none": "No hay ningún documento abierto",
     "doc.tooSmall": "El lienzo es demasiado pequeño para grabarlo",
-    "doc.noSession": "No se está grabando",
-    "doc.startForThis": "Grabar este documento",
 
     "stat.frames": "Fotogramas",
     "stat.time": "Tiempo empleado",
@@ -203,11 +202,8 @@ export const dict: Record<string, string> = {
     "settings.idle": "Tiempo de inactividad",
     "settings.idle.hint": "Dejar de contar el tiempo tras este rato sin dibujar.",
     "settings.idle.off": "Nunca",
-    "settings.autoStart": "Empezar a grabar al abrir Photoshop",
-    "settings.autoStart.hint":
-        "La grabación se ejecuta en segundo plano; este panel no necesita estar abierto.",
-    "settings.autoNew": "Grabar automáticamente los documentos nuevos",
-    "settings.autoNew.hint": "Si está desactivado, cada documento debe iniciarse a mano.",
+    "settings.autoStart": "Empezar a grabar al abrir un lienzo",
+    "settings.autoStart.hint": "Cada lienzo conserva su propio interruptor de grabación. Si lo desactivas, sigue apagado durante esta sesión de Photoshop; el próximo inicio lo vuelve a activar.",
     "settings.language": "Idioma",
     "settings.language.auto": "Como Photoshop",
     "settings.runtime": "Entorno",

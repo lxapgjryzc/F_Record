@@ -7,7 +7,7 @@ import {
 } from "../../../../shared/protocol";
 import { ConnectionStatus } from "../bridge";
 import { Translate, formatDuration, formatMillis } from "../i18n";
-import { Banner, ProgressBar, Row, Switch } from "./ui";
+import { Banner, ProgressBar, RecordDot, Row, Switch, recordingIndicator } from "./ui";
 import { openInExplorer } from "../psHost";
 
 export interface ExportJob {
@@ -40,10 +40,11 @@ export function Dashboard(props: DashboardProps): JSX.Element {
     }
 
     const paused = state.health.pausedReason;
-    const recording = state.config.enabled;
     const session = state.session;
     const document = state.document;
-    const capturing = state.health.capturing;
+    // The switch belongs to the document in front: on when its recording is.
+    const recording = !!session && session.recording;
+    const indicator = recordingIndicator(state);
 
     // What the copy button will actually do, worked out the same way the
     // exporter works it out -- a "text" mark with nothing typed yet draws
@@ -52,25 +53,21 @@ export function Dashboard(props: DashboardProps): JSX.Element {
         state.config.clipboardWatermark !== false &&
         watermarkDraws(normalizeWatermark(state.config.watermark));
 
-    let dotClass = "dot";
-    let stateLabel = t("record.off");
-    if (recording && paused) {
-        dotClass = "dot paused";
-        stateLabel = t("record.paused");
-    } else if (recording && session) {
-        dotClass = capturing ? "dot live" : "dot ok";
-        stateLabel = t("record.on");
-    }
-
     return (
         <div>
             <div class="record-head">
                 <span class="record-state">
-                    <span class={dotClass} />
-                    <span>{stateLabel}</span>
+                    <RecordDot indicator={indicator} />
+                    <span>{t(indicator.labelKey)}</span>
                 </span>
+                {/*
+                  * Nothing open means nothing to switch, and a canvas too
+                  * small to record cannot be switched on -- though one that
+                  * shrank while recording can still be switched off.
+                  */}
                 <Switch
                     checked={recording}
+                    disabled={!document || (!recording && document.tooSmall)}
                     label={recording ? t("record.stop") : t("record.start")}
                     onChange={props.onToggleRecording}
                 />
@@ -103,18 +100,6 @@ export function Dashboard(props: DashboardProps): JSX.Element {
                     {document ? document.name : <span class="muted">{t("doc.none")}</span>}
                 </Row>
                 {document && document.tooSmall ? <p class="hint">{t("doc.tooSmall")}</p> : null}
-
-                {document && !session && !document.tooSmall && state.resumeCandidates.length === 0 ? (
-                    <Banner
-                        tone="info"
-                        title={t("doc.noSession")}
-                        actions={
-                            <button type="button" class="primary" onClick={props.onStartFresh}>
-                                {t("doc.startForThis")}
-                            </button>
-                        }
-                    />
-                ) : null}
 
                 <Row label={t("stat.frames")}>{session ? session.frameCount : "—"}</Row>
                 <Row label={t("stat.time")}>

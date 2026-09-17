@@ -1,12 +1,14 @@
 /**
  * Draws the panel icon.
  *
- * The icon is a frame with a recording dot in it: a rounded square for the
- * canvas being recorded, a filled circle for "recording", the same red the
- * panel uses for its own record indicator. It is drawn here rather than kept
- * as an opaque asset so it can be regenerated at any size, in every variant
- * CEP asks for, from one description -- and so the repository carries no
- * binary nobody can reproduce.
+ * The icon is a frame with a dot in it: a rounded square for the canvas
+ * being recorded, a filled circle for "recording", both in one grey. It is a
+ * mark, not a status light; the panel says what is being recorded with its
+ * own dot. It is drawn here rather than kept as an opaque asset so it can be
+ * regenerated at any size, in every variant CEP asks for, from one
+ * description -- and so the repository carries no binary nobody can
+ * reproduce. The panel draws the same shapes inline (PanelIcon in
+ * cep/src/app/components/ui.tsx).
  *
  * CEP wants four variants, chosen by the host's theme and hover state, each
  * at 23x23 with an @2X companion for high-DPI displays:
@@ -28,14 +30,12 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = path.join(root, "cep/src/icons");
 
-const RECORD_RED = [227, 72, 80];
-
-/** Glyph colours per variant: the frame, and the dot. */
+/** The one glyph colour per variant: a grey, darker on light themes. */
 const VARIANTS = {
-    "normal": { frame: [75, 75, 75], dot: RECORD_RED },
-    "rollover": { frame: [30, 30, 30], dot: RECORD_RED },
-    "dark-normal": { frame: [208, 208, 208], dot: RECORD_RED },
-    "dark-rollover": { frame: [255, 255, 255], dot: RECORD_RED }
+    "normal": [75, 75, 75],
+    "rollover": [30, 30, 30],
+    "dark-normal": [208, 208, 208],
+    "dark-rollover": [255, 255, 255]
 };
 
 /* ------------------------------------------------------------ geometry */
@@ -57,7 +57,7 @@ function circle(x, y, cx, cy, radius) {
  * point to "inside or not". Everything scales with `size`, so the 23 px
  * and 256 px renderings are the same drawing.
  */
-function shapes(size, colours) {
+function shapes(size, colour) {
     const centre = size / 2;
     const half = size * 0.40;
     const stroke = Math.max(1.5, size * 0.085);
@@ -65,11 +65,11 @@ function shapes(size, colours) {
     const dotRadius = size * 0.17;
     return [
         {
-            colour: colours.frame,
+            colour,
             inside: (x, y) => Math.abs(roundedRect(x, y, centre, centre, half, half, corner)) <= stroke / 2
         },
         {
-            colour: colours.dot,
+            colour,
             inside: (x, y) => circle(x, y, centre, centre, dotRadius) <= 0
         }
     ];
@@ -80,9 +80,9 @@ function shapes(size, colours) {
 const SUBSAMPLES = 4;
 
 /** Renders to straight (non-premultiplied) RGBA, supersampled for smooth edges. */
-function render(size, colours) {
+function render(size, colour) {
     const pixels = Buffer.alloc(size * size * 4);
-    const layers = shapes(size, colours);
+    const layers = shapes(size, colour);
     for (let py = 0; py < size; py++) {
         for (let px = 0; px < size; px++) {
             let r = 0;
@@ -179,15 +179,15 @@ function encodePng(size, pixels) {
 
 /* ---------------------------------------------------------------- main */
 
-function write(name, size, colours) {
+function write(name, size, colour) {
     const target = path.join(outDir, name);
-    fs.writeFileSync(target, encodePng(size, render(size, colours)));
+    fs.writeFileSync(target, encodePng(size, render(size, colour)));
     process.stdout.write("wrote " + path.relative(root, target) + " (" + size + "x" + size + ")\n");
 }
 
 fs.mkdirSync(outDir, { recursive: true });
-for (const [variant, colours] of Object.entries(VARIANTS)) {
-    write(variant + ".png", 23, colours);
-    write(variant + "@2X.png", 46, colours);
+for (const [variant, colour] of Object.entries(VARIANTS)) {
+    write(variant + ".png", 23, colour);
+    write(variant + "@2X.png", 46, colour);
 }
 write("icon-256.png", 256, VARIANTS["dark-normal"]);

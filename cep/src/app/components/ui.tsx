@@ -1,6 +1,89 @@
 /** Small presentational primitives shared by the three tabs. */
 
 import { ComponentChildren, JSX } from "preact";
+import { State } from "../../../../shared/protocol";
+
+/* --------------------------------------------------------- the panel icon */
+
+/**
+ * The panel's own icon: the frame with the dot in it, the same drawing as
+ * the one in Photoshop's dock (scripts/icon.mjs), in one grey. It is a mark,
+ * not a status light -- both shapes take `currentColor`, so the stylesheet
+ * gives it a single colour and nothing about the recording changes it.
+ */
+export function PanelIcon(props: { size?: number }): JSX.Element {
+    const size = props.size || 16;
+    return (
+        <svg
+            class="panel-icon"
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
+            focusable="false"
+        >
+            <rect x="3" y="3" width="18" height="18" rx="4" stroke="currentColor" stroke-width="2" />
+            <circle cx="12" cy="12" r="4" fill="currentColor" />
+        </svg>
+    );
+}
+
+/* -------------------------------------------------------- the record dot */
+
+/**
+ * What the recording dot says: off (grey), on (red) or that something is
+ * in the way of a recording that is switched on (yellow).
+ */
+export type RecordingTone = "off" | "on" | "problem";
+
+export interface RecordingIndicator {
+    tone: RecordingTone;
+    /** True while a frame is being taken, so the dot can pulse. */
+    capturing: boolean;
+    /** The locale key that says the same thing in words. */
+    labelKey: string;
+}
+
+/**
+ * One reading of the state, so the dot and the word next to it cannot
+ * disagree.
+ *
+ * The switch is the document's own (session.recording). With it off, or
+ * with nothing to read, the dot is grey whatever else is going on. With it
+ * on, anything that stops frames being written is a problem: a pause,
+ * captures failing, a canvas shrunk below the minimum. Only a recording that
+ * is actually free to write is red.
+ */
+export function recordingIndicator(state: State | null): RecordingIndicator {
+    const session = state ? state.session : null;
+    if (!state || !session || !session.recording) {
+        return { tone: "off", capturing: false, labelKey: "record.off" };
+    }
+    if (state.health.pausedReason) {
+        return { tone: "problem", capturing: false, labelKey: "record.paused" };
+    }
+    if (state.document && state.document.tooSmall) {
+        return { tone: "problem", capturing: false, labelKey: "doc.tooSmall" };
+    }
+    if (state.health.consecutiveFailures > 0) {
+        return { tone: "problem", capturing: false, labelKey: "record.failing" };
+    }
+    return { tone: "on", capturing: state.health.capturing, labelKey: "record.on" };
+}
+
+/**
+ * The one status light in the panel: a plain dot, coloured by the tone and
+ * pulsing while a frame is being taken. It always sits next to the word
+ * that says the same thing, so it is decorative to a screen reader.
+ */
+export function RecordDot(props: { indicator: RecordingIndicator }): JSX.Element {
+    let className = "record-dot " + props.indicator.tone;
+    if (props.indicator.capturing) {
+        className += " capturing";
+    }
+    return <span class={className} aria-hidden="true" />;
+}
 
 /**
  * GitHub's mark, inlined as a path.

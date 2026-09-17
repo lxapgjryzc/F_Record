@@ -91,6 +91,7 @@ export function panelState(overrides = {}) {
         session: {
             sessionId: "s1",
             folder: "C:/frames/s1",
+            recording: true,
             frameCount: 12,
             timeSpentSec: 90,
             lastFrameAt: 1700000000000,

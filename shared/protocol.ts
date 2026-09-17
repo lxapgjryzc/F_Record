@@ -5,19 +5,19 @@
  */
 
 /**
- * Bumped for 13: `clipboardResolution`. As with `clipboardWatermark` before
- * it, and `exportDefaults` and `style` inside the watermark before that, a
- * new setting means a panel newer than its generator, and the mismatch has to
- * be visible rather than showing up as a box whose choice is not respected.
+ * Bumped for 14: the recording switch moved from the config to the document.
+ * `config.enabled` is gone, `session.recording` and the `setRecording`
+ * command replace it, and `autoStartNewDocuments` folded into `autoStart`.
+ * A panel from before would keep sending a config patch the generator no
+ * longer reads, so the halves have to refuse each other outright.
  *
- * An older generator would in fact carry this field through untouched -- it
- * copies the stored config wholesale and only overwrites the keys it knows --
- * so the choice would stick. What it would not do is normalize it, and it is
- * the generator that owns the config file. Saying "these two halves are not
- * the same version" is cheaper than working out, for each new field, whether
- * the older half happens to be harmless.
+ * Before that, 13 was for `clipboardResolution`: a new setting means a panel
+ * newer than its generator, and the mismatch has to be visible rather than
+ * showing up as a box whose choice is not respected. Saying "these two halves
+ * are not the same version" is cheaper than working out, for each new field,
+ * whether the older half happens to be harmless.
  */
-export const PROTOCOL_VERSION = 13;
+export const PROTOCOL_VERSION = 14;
 export const PLUGIN_NAME = "F_Record";
 
 /** Where users are asked to file bugs, and where update checks look. */
@@ -301,16 +301,17 @@ export function normalizeExportDefaults(value: unknown): ExportDefaults {
 
 export interface Config {
     /**
-     * Recording armed. Owned by the generator, mirrored into the panel.
-     * Stored with the rest and carried across a launch, so a document that
-     * was being recorded when Photoshop quit is still being recorded when it
-     * comes back; `autoStart` can only switch it on.
+     * Switch recording on for a canvas the first time a Photoshop run sees
+     * it, without the panel being opened.
+     *
+     * The switch itself belongs to the canvas -- see SessionState.recording
+     * -- and stays where the artist left it across a restart. This is the
+     * one thing that flips it on their behalf: a canvas that has never been
+     * recorded gets a recording, and one whose switch is off gets it turned
+     * on. Once per run per canvas, so switching one off again holds for the
+     * rest of the sitting; the next launch starts it again.
      */
-    enabled: boolean;
-    /** Arm recording as soon as Photoshop launches, without opening the panel. */
     autoStart: boolean;
-    /** Open a session for documents that have never been recorded before. */
-    autoStartNewDocuments: boolean;
     processImageFolderPath: string;
     resolution: Resolution;
     /** JPEG quality, 1-100. */
@@ -361,9 +362,7 @@ export interface Config {
 }
 
 export const DEFAULT_CONFIG: Omit<Config, "processImageFolderPath"> = {
-    enabled: false,
     autoStart: false,
-    autoStartNewDocuments: true,
     resolution: "1080",
     quality: 70,
     idleTimeoutMinutes: 1,
@@ -420,6 +419,13 @@ export interface DocumentState {
 export interface SessionState {
     sessionId: string;
     folder: string;
+    /**
+     * The canvas's own recording switch, kept in its session.json so it
+     * travels with the folder and survives a restart. Off means the
+     * recording stays attached to the document -- frames, time, folder --
+     * and nothing more is written into it until it is switched on again.
+     */
+    recording: boolean;
     frameCount: number;
     timeSpentSec: number;
     lastFrameAt: number | null;
@@ -515,6 +521,13 @@ export type MoveDestination = "document" | "root";
 export type Command =
     | { type: "ping" }
     | { type: "setConfig"; patch: Partial<Config> }
+    /**
+     * The recording switch for the document in front. On with no recording
+     * yet starts one, as newSession does; off leaves the recording attached
+     * and stops writing into it. Either way the choice holds for the rest of
+     * the run against `autoStart`.
+     */
+    | { type: "setRecording"; recording: boolean }
     | { type: "pause"; reason: string }
     | { type: "resume" }
     | { type: "listSessions" }

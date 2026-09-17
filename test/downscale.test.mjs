@@ -149,7 +149,6 @@ async function startPlugin(behaviour) {
         path.join(appDir, "config.json"),
         JSON.stringify({
             autoStart: true,
-            autoStartNewDocuments: true,
             resolution: "1080",
             minIntervalMs: 200,
             minCanvasPixels: 0,

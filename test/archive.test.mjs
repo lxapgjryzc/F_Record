@@ -246,9 +246,7 @@ test("moveFolder refuses to land on something that already exists", async (t) =>
 function setupResolver() {
     const s = setupRoot();
     const config = {
-        enabled: true,
         autoStart: false,
-        autoStartNewDocuments: true,
         processImageFolderPath: s.root,
         resolution: "1080",
         quality: 70,

@@ -22,6 +22,7 @@ const {
     ConfigStore,
     SessionIndex,
     chooseDocumentSideFolder,
+    createManifest,
     deleteSession,
     duplicateFrames,
     listSessions,
@@ -29,6 +30,7 @@ const {
     moveFolder,
     normalizeConfig,
     normalizePath,
+    readManifest,
     scanFrames,
     summarizeSession,
     writeManifest,
@@ -106,51 +108,55 @@ test("the config on disk is the one that comes back, normalised", (t) => {
     assert.equal(reread.get().language, "zh-CN");
 });
 
-test("recording left on at the last quit is still on at the next launch", (t) => {
+test("reading the config at launch writes nothing back", (t) => {
     const isolated = withIsolatedAppDir();
     t.after(() => isolated.cleanup());
     t.after(clearFaults);
 
-    // The previous Photoshop wrote `enabled: true` when the user switched
-    // recording on, and kept it there when they quit. The document they were
-    // recording finds its session again at the next launch, and it has to
-    // find the switch where they left it too, or the day's drawing goes
-    // unrecorded until someone notices. Auto-start being off changes nothing:
-    // it is a way to turn the switch on, not a reason to turn it off.
-    new ConfigStore().update({ enabled: true, autoStart: false });
-
-    // Nothing to correct, so nothing is written; a disk that refuses the
-    // write proves there was none.
-    setFault("writeFileSync", fsError("EROFS", "read-only at launch"));
-    assert.equal(new ConfigStore().get().enabled, true);
-});
-
-test("auto-start arms recording from the first read of the config", (t) => {
-    const isolated = withIsolatedAppDir();
-    t.after(() => isolated.cleanup());
-    t.after(clearFaults);
-
-    new ConfigStore().update({ enabled: false, autoStart: true });
-
-    // Before the plug-in has even started listening for events, so nothing
-    // that reads the config in between can see recording as off.
-    const store = new ConfigStore();
-    assert.equal(store.get().enabled, true);
-    const onDisk = JSON.parse(fs.readFileSync(path.join(isolated.dir, "F_Record", "config.json"), "utf8"));
-    assert.equal(onDisk.enabled, true);
-});
-
-test("a config that already agrees with auto-start is not rewritten at launch", (t) => {
-    const isolated = withIsolatedAppDir();
-    t.after(() => isolated.cleanup());
-    t.after(clearFaults);
-
-    new ConfigStore().update({ enabled: true, autoStart: true });
+    new ConfigStore().update({ autoStart: true });
 
     // A write here would be a write on every launch of Photoshop, for
     // nothing; a disk that refuses it proves there was none.
     setFault("writeFileSync", fsError("EROFS", "read-only at launch"));
-    assert.equal(new ConfigStore().get().enabled, true);
+    assert.equal(new ConfigStore().get().autoStart, true);
+});
+
+test("the switches of protocol 13 are dropped from the file rather than carried forever", (t) => {
+    const isolated = withIsolatedAppDir();
+    t.after(() => isolated.cleanup());
+
+    // A config written by the last version, with the global switch on and
+    // the second auto-start setting beside it. Neither means anything now:
+    // the switch is the canvas's own, in its session.json.
+    const file = path.join(isolated.dir, "F_Record", "config.json");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ enabled: true, autoStart: false, autoStartNewDocuments: false, quality: 80 }));
+
+    const store = new ConfigStore();
+    assert.equal("enabled" in store.get(), false);
+    assert.equal("autoStartNewDocuments" in store.get(), false);
+    assert.equal(store.get().quality, 80, "everything else is read as before");
+
+    store.update({ quality: 90 });
+    const onDisk = JSON.parse(fs.readFileSync(file, "utf8"));
+    assert.equal("enabled" in onDisk, false, "and the next write leaves them out");
+    assert.equal(onDisk.quality, 90);
+});
+
+test("a recording's switch is on unless its manifest says otherwise", (t) => {
+    const temp = tempDir();
+    t.after(() => temp.cleanup());
+
+    // Written before the switch existed: the only way it was recorded at all
+    // was with the old global switch on, so it reads as on.
+    writeSession(temp.dir, "legacy");
+    assert.equal(readManifest(path.join(temp.dir, "legacy")).recording, true);
+
+    const off = createManifest("off", "dragon", null, null, DEFAULT_CONFIG);
+    assert.equal(off.recording, true, "a fresh recording is opened to be recorded into");
+    off.recording = false;
+    writeManifest(path.join(temp.dir, "off"), off);
+    assert.equal(readManifest(path.join(temp.dir, "off")).recording, false, "an explicit off stays off");
 });
 
 test("a config file full of nonsense is repaired rather than refused", (t) => {

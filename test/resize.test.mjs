@@ -139,7 +139,6 @@ async function startPlugin() {
         path.join(appDir, "config.json"),
         JSON.stringify({
             autoStart: true,
-            autoStartNewDocuments: true,
             minIntervalMs: 200,
             minCanvasPixels: 0,
             processImageFolderPath: path.join(appDir, "processImages")

@@ -4,11 +4,11 @@
 
 F_Record records your Photoshop drawing process. It saves frames when the canvas changes, exports recordings as videos, and copies the current canvas to the clipboard.
 
-Version **4.0.1** targets **Windows and Photoshop CC 2015.5–2026 (17.x–27.x)**. The package contains a Generator plug-in and three CEP panels; the installer selects the appropriate panel automatically.
+Version **4.0.2** targets **Windows and Photoshop CC 2015.5–2026 (17.x–27.x)**. The package contains a Generator plug-in and three CEP panels; the installer selects the appropriate panel automatically.
 
 ## Install or upgrade
 
-1. Download `F_Record-4.0.1.zip` and extract the entire archive. GitHub's automatic Source code archives require building before installation.
+1. Download `F_Record-4.0.2.zip` and extract the entire archive. GitHub's automatic Source code archives require building before installation.
 2. Quit Photoshop, open PowerShell in the extracted directory, and run:
 
    ```powershell
@@ -20,7 +20,7 @@ Version **4.0.1** targets **Windows and Photoshop CC 2015.5–2026 (17.x–27.x)
 3. Start Photoshop and check **Edit → Preferences → Plug-ins**: enable Generator and allow extension panels. Restart Photoshop after changing these preferences.
 4. Open **F_Record** under **Window → Extensions** or **Window → Extensions (legacy)**. Menu names vary with version and language.
 
-Use the same command to upgrade both halves together. The panel and Generator use protocol version **13** and should be installed as a matching pair.
+Use the same command to upgrade both halves together. The panel and Generator use protocol version **14** and should be installed as a matching pair.
 
 | Photoshop | Major version | Selected panel |
 |---|---|---|
@@ -47,7 +47,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1 -D
 
 ## Record and resume
 
-Turn recording on in the panel. The Generator saves frames for the active document and keeps working when the panel is hidden or closed. Settings can enable recording automatically when Photoshop starts.
+The recording switch belongs to each canvas. Turn it on in the panel for the document in front and the Generator saves frames for that document; the switch is stored with its recording, so it is kept per document across document switches, closing and reopening, and Photoshop restarts. Recording keeps working when the panel is hidden or closed. A dot next to the status on the dashboard follows the canvas in front: red while recording, yellow when something is in the way (paused, captures failing, canvas too small), grey when not recording. The icon in the panel and in the dock is a plain grey mark and says nothing about state.
+
+"Start recording when a canvas is opened" in Settings switches a canvas on the first time a Photoshop session sees it: a canvas never recorded gets a recording, one that was switched off is switched on. A canvas you switch off after that stays off for the rest of the session; the next launch starts it again.
 
 - Canvas changes trigger captures. The default minimum interval is 1.5 seconds and adapts to capture cost; inactivity does not continuously produce duplicate frames.
 - Recording defaults to 1080p and JPEG quality 70. Resolution uses a pixel-area budget while preserving the canvas aspect ratio, without cropping to 16:9.
@@ -112,6 +114,6 @@ npm run check
 node scripts/build.mjs --zip
 ```
 
-Builds go to `dist\`; the release archive is `release\F_Record-4.0.1.zip`. Development uses the system's Node.js, while the installed plug-in uses Photoshop's runtime.
+Builds go to `dist\`; the release archive is `release\F_Record-4.0.2.zip`. Development uses the system's Node.js, while the installed plug-in uses Photoshop's runtime.
 
 See the [development and release guide](docs/DEVELOPMENT.md) for module ownership, tests, and publishing steps. Licensed under [GPL-3.0-only](LICENSE).

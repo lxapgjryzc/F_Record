@@ -23,12 +23,11 @@ export const dict: Record<string, string> = {
     "record.paused": "Приостановлено",
     "record.start": "Начать запись",
     "record.stop": "Остановить запись",
+    "record.failing": "Захват не удаётся; повторная попытка",
 
     "doc.title": "Документ",
     "doc.none": "Нет открытых документов",
     "doc.tooSmall": "Холст слишком мал для записи",
-    "doc.noSession": "Не записывается",
-    "doc.startForThis": "Записывать этот документ",
 
     "stat.frames": "Кадры",
     "stat.time": "Затрачено времени",
@@ -203,11 +202,8 @@ export const dict: Record<string, string> = {
     "settings.idle": "Время простоя",
     "settings.idle.hint": "Прекращать отсчёт времени после такого перерыва в рисовании.",
     "settings.idle.off": "Никогда",
-    "settings.autoStart": "Начинать запись при запуске Photoshop",
-    "settings.autoStart.hint":
-        "Запись идёт в фоне; держать эту панель открытой не нужно.",
-    "settings.autoNew": "Автоматически записывать новые документы",
-    "settings.autoNew.hint": "Если выключено, каждый документ нужно запускать вручную.",
+    "settings.autoStart": "Начинать запись при открытии холста",
+    "settings.autoStart.hint": "У каждого холста свой переключатель записи. Выключенный остаётся выключенным до конца этого сеанса Photoshop; при следующем запуске запись начнётся снова.",
     "settings.language": "Язык",
     "settings.language.auto": "Как в Photoshop",
     "settings.runtime": "Среда выполнения",

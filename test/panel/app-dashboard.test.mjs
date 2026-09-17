@@ -24,22 +24,42 @@ const refuse = (message) => {
 
 /* --------------------------------------------------------------- recording */
 
-test("the recording switch writes the config, and a refusal is said out loud", async () => {
-    const container = await openPanel(panelState({ config: { ...panelState().config, enabled: false } }));
+test("the recording switch flips the document in front, and a refusal is said out loud", async () => {
+    const container = await openPanel(panelState({ session: null }));
     click(recordSwitch(container));
     await dom.flush();
-    assert.deepEqual(panel.bridge.last("setConfig"), { type: "setConfig", patch: { enabled: true } });
+    assert.deepEqual(panel.bridge.last("setRecording"), { type: "setRecording", recording: true });
     assert.deepEqual(toasts(container), []);
 
-    refuse("config.json is read-only");
+    refuse("The canvas is too small to record");
     click(recordSwitch(container));
     await dom.flush();
-    assert.deepEqual(toasts(container), ["config.json is read-only"]);
+    assert.deepEqual(toasts(container), ["The canvas is too small to record"]);
+});
+
+test("the tab bar carries the panel's mark, and the dashboard the one status light", async () => {
+    const dots = (container) => queryAll(container, ".record-dot");
+
+    const container = await openPanel(panelState());
+    assert.equal(query(container, ".tabs .panel-icon").getAttribute("class"), "panel-icon", "one grey, no state in it");
+    assert.equal(dots(container).length, 1, "one light in the whole panel");
+    assert.ok(query(container, ".record-state .record-dot"), "next to the word for it");
+
+    // The mark stays on every tab; the light is the dashboard's alone.
+    click(byText(query(container, ".tabs"), t("tab.settings")));
+    await dom.flush();
+    assert.ok(query(container, ".tabs .panel-icon"));
+    assert.equal(dots(container).length, 0);
+
+    // Before the generator is reached the tab bar still only shows the mark.
+    const alone = await openPanel(null);
+    assert.ok(query(alone, ".tabs .panel-icon"));
+    assert.equal(query(alone, ".tabs .record-dot"), null);
 });
 
 test("resuming a paused recording asks for exactly that", async () => {
     const container = await openPanel(
-        panelState({ config: { ...panelState().config, enabled: true }, health: { ...panelState().health, pausedReason: "Disk full" } })
+        panelState({ health: { ...panelState().health, pausedReason: "Disk full" } })
     );
     click(query(container, ".banner.error button.primary"));
     await dom.flush();
@@ -71,14 +91,16 @@ test("adopting a recording attaches it to the document in front", async () => {
     assert.deepEqual(toasts(container), ["That folder has gone"]);
 });
 
-test("starting fresh opens a new recording for the document in front", async () => {
-    const container = await openPanel(panelState({ session: null }));
-    click(byText(container, t("doc.startForThis")));
+test("starting fresh from the resume offer opens a new recording for the document in front", async () => {
+    const container = await openPanel(
+        panelState({ session: null, resumeCandidates: [sessionRow({ sessionId: "old", docName: "dragon" })] })
+    );
+    click(byText(container, t("resume.fresh")));
     await dom.flush();
     assert.deepEqual(panel.bridge.last("newSession"), { type: "newSession", documentId: 1 });
 
     refuse("The frames folder is not writable");
-    click(byText(container, t("doc.startForThis")));
+    click(byText(container, t("resume.fresh")));
     await dom.flush();
     assert.deepEqual(toasts(container), ["The frames folder is not writable"]);
 });
@@ -297,6 +319,20 @@ test("a review of a recording the listing has since lost still has words for it"
     await dom.flush();
     assert.equal(textOf(query(container, ".review-name")), "b", "named by its id, which is all that is left");
     assert.equal(textOf(query(container, ".dialog .hint")), t("review.unsaved"));
+});
+
+/* ------------------------------------------------------------------ settings */
+
+test("a setting the generator refuses is said out loud", async () => {
+    const container = await openPanel(panelState());
+    click(byText(query(container, ".tabs"), t("tab.settings")));
+    await dom.flush();
+
+    refuse("config.json is read-only");
+    click(byText(container, t("settings.autoStart")));
+    await dom.flush();
+    assert.deepEqual(panel.bridge.last("setConfig"), { type: "setConfig", patch: { autoStart: true } });
+    assert.deepEqual(toasts(container), ["config.json is read-only"]);
 });
 
 /* ------------------------------------------------------- checking for updates */

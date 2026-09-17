@@ -55,6 +55,16 @@ export interface SessionManifest {
     version: number;
     sessionId: string;
     docName: string;
+    /**
+     * The canvas's recording switch. In the manifest rather than the config
+     * because it is a fact about this drawing: it is carried beside the
+     * document when the folder is, and it comes back after a restart with
+     * the session. Absent on manifests written before it existed, which
+     * readManifest reads as on -- those recordings were only ever made with
+     * the old global switch on, and a spurious folder is cheaper than a
+     * day's frames that went unrecorded.
+     */
+    recording: boolean;
     /** Every path this document has been saved to, oldest first. */
     filePathHistory: string[];
     canvasBounds: Bounds | null;
@@ -110,21 +120,7 @@ export class ConfigStore {
             processImageFolderPath: defaultProcessImageFolder()
         } as Partial<Config>);
         const stored = readJson<Partial<Config>>(configPath(), {});
-        const config = normalizeConfig(assign({} as Config, base, stored));
-        // The switch stays where the artist left it. A document that was being
-        // recorded when Photoshop quit picks its session back up at the next
-        // launch (see session.ts), and that is only worth anything if
-        // recording is still on when it does; resetting the switch here once
-        // cost a morning's frames on a document nobody had told to stop.
-        // Auto-start only ever turns it on -- before the plug-in has even
-        // started listening for events, so nothing that reads the config in
-        // between can see recording as off. The file is corrected too, so
-        // doctor.ps1 reports what is actually happening.
-        if (config.autoStart && !config.enabled) {
-            config.enabled = true;
-            writeJsonAtomic(configPath(), config);
-        }
-        return config;
+        return normalizeConfig(assign({} as Config, base, stored));
     }
 
     get(): Config {
@@ -146,9 +142,16 @@ export class ConfigStore {
 export function normalizeConfig(config: Config): Config {
     const out = assign({} as Config, config);
 
-    out.enabled = !!out.enabled;
     out.autoStart = !!out.autoStart;
-    out.autoStartNewDocuments = !!out.autoStartNewDocuments;
+    // Up to protocol 13 the switch was global and lived here, with a second
+    // setting saying whether documents never recorded before got a folder.
+    // The switch is the canvas's own now (see SessionManifest.recording) and
+    // auto-start covers both; the stale keys are dropped rather than carried
+    // in the file forever, so doctor.ps1 does not report a switch that
+    // nothing reads.
+    const dropped = out as unknown as { enabled?: unknown; autoStartNewDocuments?: unknown };
+    delete dropped.enabled;
+    delete dropped.autoStartNewDocuments;
 
     if (RESOLUTIONS.indexOf(out.resolution) === -1) {
         out.resolution = DEFAULT_CONFIG.resolution;
@@ -211,6 +214,8 @@ export function readManifest(folder: string): SessionManifest | null {
     if (!manifest || typeof manifest.sessionId !== "string") {
         return null;
     }
+    // Only an explicit off is off; see the field.
+    manifest.recording = manifest.recording !== false;
     return manifest;
 }
 
@@ -231,6 +236,8 @@ export function createManifest(
         version: MANIFEST_VERSION,
         sessionId: sessionId,
         docName: docName,
+        // A recording is only ever started to be recorded into.
+        recording: true,
         filePathHistory: filePath ? [filePath] : [],
         canvasBounds: bounds,
         frameCount: 0,

@@ -14,7 +14,7 @@ import {
 import { StaleCriteria, staleSessions } from "../../../shared/stale";
 import { BridgeClient, ConnectionStatus } from "./bridge";
 import { Translate, createTranslate } from "./i18n";
-import { Banner, IssueButton, Toast, Toasts } from "./components/ui";
+import { Banner, IssueButton, PanelIcon, Toast, Toasts } from "./components/ui";
 import { Dashboard, ExportJob } from "./components/Dashboard";
 import { Sessions } from "./components/Sessions";
 import { Settings } from "./components/Settings";
@@ -825,6 +825,11 @@ export function App(): JSX.Element {
     return (
         <div class="app">
             <div class="tabs">
+                {/*
+                  * The panel's mark, and only that: whether the canvas in
+                  * front is being recorded is the dashboard's dot to say.
+                  */}
+                <PanelIcon size={18} />
                 <TabButton label={t("tab.dashboard")} active={tab === "dashboard"} onClick={() => setTab("dashboard")} />
                 <TabButton label={t("tab.sessions")} active={tab === "sessions"} onClick={() => setTab("sessions")} />
                 <TabButton label={t("tab.archive")} active={tab === "archive"} onClick={() => setTab("archive")} />
@@ -875,7 +880,11 @@ export function App(): JSX.Element {
                         status={status}
                         statusDetail={statusDetail}
                         exportJob={exportJob}
-                        onToggleRecording={(next) => patchConfig({ enabled: next })}
+                        onToggleRecording={(next) => {
+                            send({ type: "setRecording", recording: next }).catch((e: Error) =>
+                                pushToast("negative", e.message)
+                            );
+                        }}
                         onResume={() => {
                             send({ type: "resume" }).catch((e: Error) => pushToast("negative", e.message));
                         }}

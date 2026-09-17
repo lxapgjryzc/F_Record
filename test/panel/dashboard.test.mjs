@@ -57,44 +57,50 @@ function dashboard(overrides = {}, props = {}) {
     return { container, calls, only: (name) => calls.filter((call) => call.name === name) };
 }
 
-const dot = (container) => query(container, "span.record-state span").className;
+const dot = (container) => query(container, ".record-state .record-dot").getAttribute("class");
 const toggle = (container) => query(container, 'button[role="switch"]');
 const exportButton = (container) => queryAll(container, ".record-actions button")[1] || null;
 const copyButton = (container) => queryAll(container, ".record-actions button")[0];
+/** The state with the document in front's own switch off. */
+const switchedOff = () => ({ session: { ...panelState().session, recording: false } });
 
 /* ------------------------------------------------------- is it recording? */
 
-test("off, on, live and paused each look different at a glance", () => {
-    const off = dashboard({ config: { enabled: false } });
-    assert.equal(dot(off.container), "dot");
+test("off, on, live and blocked each look different at a glance", () => {
+    const off = dashboard(switchedOff());
+    assert.equal(dot(off.container), "record-dot off");
     assert.ok(textOf(off.container).indexOf(t("record.off")) !== -1);
 
-    const idle = dashboard({ config: { enabled: true } });
-    assert.equal(dot(idle.container), "dot ok", "recording, between captures");
+    const idle = dashboard();
+    assert.equal(dot(idle.container), "record-dot on", "recording, between captures");
     assert.ok(textOf(idle.container).indexOf(t("record.on")) !== -1);
 
-    const live = dashboard({ config: { enabled: true }, health: { capturing: true } });
-    assert.equal(dot(live.container), "dot live", "and mid-capture");
+    const live = dashboard({ health: { capturing: true } });
+    assert.equal(dot(live.container), "record-dot on capturing", "and mid-capture");
 
-    const stopped = dashboard({ config: { enabled: true }, health: { pausedReason: "Disk full" } });
-    assert.equal(dot(stopped.container), "dot paused");
+    const stopped = dashboard({ health: { pausedReason: "Disk full" } });
+    assert.equal(dot(stopped.container), "record-dot problem");
     assert.ok(textOf(stopped.container).indexOf(t("record.paused")) !== -1);
+
+    const failing = dashboard({ health: { consecutiveFailures: 2 } });
+    assert.equal(dot(failing.container), "record-dot problem", "not paused yet, but not writing either");
+    assert.ok(textOf(failing.container).indexOf(t("record.failing")) !== -1);
 });
 
-test("a recording switched on with nothing to record does not claim to be on", () => {
-    const { container } = dashboard({ config: { enabled: true }, session: null });
-    assert.equal(dot(container), "dot", "the switch is on but no frames are going anywhere");
+test("a document with no recording is off, whatever auto-start says", () => {
+    const { container } = dashboard({ config: { autoStart: true }, session: null });
+    assert.equal(dot(container), "record-dot off", "no frames are going anywhere");
     assert.ok(textOf(container).indexOf(t("record.off")) !== -1);
 });
 
 test("the switch says what it will do, not what is happening", () => {
-    const off = dashboard({ config: { enabled: false } });
+    const off = dashboard({ session: null });
     assert.equal(textOf(toggle(off.container)).trim(), t("record.start"));
     assert.equal(toggle(off.container).getAttribute("aria-checked"), "false");
     click(toggle(off.container));
     assert.deepEqual(off.only("toggle")[0].args, [true]);
 
-    const on = dashboard({ config: { enabled: true } });
+    const on = dashboard();
     assert.equal(textOf(toggle(on.container)).trim(), t("record.stop"));
     click(toggle(on.container));
     assert.deepEqual(on.only("toggle")[0].args, [false]);
@@ -102,7 +108,6 @@ test("the switch says what it will do, not what is happening", () => {
 
 test("a pause says why, and offers the one thing worth doing about it", () => {
     const { container, only } = dashboard({
-        config: { enabled: true },
         health: { pausedReason: "Photoshop is busy" }
     });
     const banner = query(container, ".banner.error");
@@ -149,28 +154,35 @@ test("with nothing open the document row says so, quietly", () => {
     assert.equal(textOf(query(container, ".section span.muted")), t("doc.none"));
 });
 
-test("a canvas too small to record is told so, and not offered a recording", () => {
+test("a canvas too small to record is told so, and cannot be switched on", () => {
     const { container } = dashboard({
         document: { ...panelState().document, tooSmall: true },
         session: null
     });
     assert.ok(textOf(container).indexOf(t("doc.tooSmall")) !== -1);
-    assert.equal(byText(container, t("doc.startForThis")), null, "starting one would fail");
+    assert.equal(toggle(container).disabled, true, "starting one would fail");
 });
 
-test("a document with no recording yet is offered one", () => {
-    const { container, only } = dashboard({ document: panelState().document, session: null });
-    click(byText(container, t("doc.startForThis")));
-    assert.equal(only("fresh").length, 1);
+test("a canvas that shrank while recording is blocked, and can still be switched off", () => {
+    const { container } = dashboard({ document: { ...panelState().document, tooSmall: true } });
+    assert.equal(dot(container), "record-dot problem");
+    assert.ok(textOf(container).indexOf(t("doc.tooSmall")) !== -1);
+    assert.equal(toggle(container).disabled, false);
 });
 
-test("nothing is offered twice: the resume banner takes the offer with it", () => {
-    const { container } = dashboard({
+test("with nothing open there is nothing to switch", () => {
+    const { container } = dashboard({ document: null, session: null });
+    assert.equal(toggle(container).disabled, true);
+});
+
+test("a document with a recording it could continue is offered the choice, or a fresh start", () => {
+    const { container, only } = dashboard({
         session: null,
         resumeCandidates: [sessionRow({ sessionId: "old" })]
     });
-    assert.equal(byText(container, t("doc.startForThis")), null);
-    assert.ok(textOf(container).indexOf(t("resume.title")) !== -1, "the resume offer says it instead");
+    assert.ok(textOf(container).indexOf(t("resume.title")) !== -1);
+    click(byText(container, t("resume.fresh")));
+    assert.equal(only("fresh").length, 1);
 });
 
 /* -------------------------------------------------------------- resuming */

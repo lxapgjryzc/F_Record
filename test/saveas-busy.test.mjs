@@ -191,7 +191,7 @@ async function startPlugin(initialFile, pluginOptions = {}) {
     fs.mkdirSync(appDir, { recursive: true });
     fs.writeFileSync(
         path.join(appDir, "config.json"),
-        JSON.stringify({ autoStart: true, minIntervalMs: 100, autoStartNewDocuments: true })
+        JSON.stringify({ autoStart: true, minIntervalMs: 100 })
     );
 
     const ps = makeBusyPhotoshop(initialFile);

@@ -31,7 +31,7 @@ function makeState() {
     return {
         protocolVersion: PROTOCOL_VERSION,
         generator: { pluginVersion: "4.10.0" },
-        config: { enabled: false },
+        config: { autoStart: false },
         document: null,
         session: null,
         health: { encoder: "js" },
@@ -246,10 +246,10 @@ test("a command goes out with the token and the panel's own header", async (t) =
     h.client.start();
     await until(() => h.seen.state.length > 0, "the first state");
 
-    const result = await h.client.send({ type: "setConfig", patch: { enabled: true } });
+    const result = await h.client.send({ type: "setRecording", recording: true });
 
-    assert.deepEqual(result, { ok: true, echoed: "setConfig" });
-    assert.deepEqual(commands, [{ type: "setConfig", patch: { enabled: true } }]);
+    assert.deepEqual(result, { ok: true, echoed: "setRecording" });
+    assert.deepEqual(commands, [{ type: "setRecording", recording: true }]);
 });
 
 test("a command sent before the generator is found is refused, not queued", async (t) => {

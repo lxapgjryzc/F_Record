@@ -416,27 +416,43 @@ body.kbd .switch:focus .switch-track {
     margin: 0 0 4px 6px;
 }
 
-.dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 4px;
-    background: var(--text-dim);
-    margin-right: 8px;
+/*
+ * The panel's mark in the tab bar: one grey, whatever is going on, as the
+ * dock's copy is on each Photoshop brightness.
+ */
+.tabs .panel-icon {
     flex: 0 0 auto;
+    align-self: center;
+    margin: 0 4px 0 10px;
+    color: var(--text-dim);
 }
 
-.dot.live {
+/*
+ * The status light: a dot, grey when the canvas in front is not being
+ * recorded, red while it is, yellow when its recording is switched on but
+ * something is in the way.
+ */
+.record-dot {
+    flex: 0 0 auto;
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-right: 8px;
+    border-radius: 50%;
+    background: var(--text-dim);
+}
+
+.record-dot.on {
     background: var(--danger);
+}
+
+.record-dot.capturing {
     -webkit-animation: pulse 1.6s ease-in-out infinite;
     animation: pulse 1.6s ease-in-out infinite;
 }
 
-.dot.paused {
+.record-dot.problem {
     background: var(--warning);
-}
-
-.dot.ok {
-    background: var(--success);
 }
 
 @-webkit-keyframes pulse {

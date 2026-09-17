@@ -196,6 +196,16 @@ class FRecordPlugin {
     private readonly trash: Trash;
     private photoshopVersion: string | null = null;
     /**
+     * Documents whose recording switch has been settled for this run, by
+     * document id: the artist flipped it, or auto-start already did. Auto-
+     * start gets one go per document per run -- see Config.autoStart -- so
+     * that a canvas switched off stays off for the sitting rather than
+     * being switched back on at the next heartbeat.
+     */
+    private readonly decidedThisRun: { [documentId: number]: true } = {};
+    /** What the Photoshop menu item was last told to show as its check mark. */
+    private menuChecked = false;
+    /**
      * Session the capture geometry has already been logged for.
      *
      * What Photoshop returns for a given pixmap request has not been the same
@@ -362,10 +372,10 @@ class FRecordPlugin {
         // behind them.
         this.subscribeToPhotoshop();
 
-        // ConfigStore has already armed recording for auto-start on this
-        // launch; the line is here so the log says why recording began.
+        // Said once here so the log says why a canvas began recording
+        // without anyone touching the panel.
         if (this.configStore.get().autoStart) {
-            this.log.info("Auto-start is on; recording is armed without waiting for the panel");
+            this.log.info("Auto-start is on; each canvas starts recording the first time it is seen");
         }
 
         this.tickTimer = setInterval(() => this.tick(), TICK_MS);
@@ -433,6 +443,7 @@ class FRecordPlugin {
             if (event.closed) {
                 if (documentId !== null) {
                     this.resolver.forgetDocument(documentId);
+                    delete this.decidedThisRun[documentId];
                     if (documentId === this.activeDocumentId) {
                         this.clearActiveDocument();
                     }
@@ -494,8 +505,21 @@ class FRecordPlugin {
         if (!menu || menu.name !== MENU_ID) {
             return;
         }
-        const config = this.configStore.get();
-        this.detach("error", "Menu toggle failed", this.applyConfigPatch({ enabled: !config.enabled }));
+        this.detach("error", "Menu toggle failed", this.toggleFromMenu());
+    }
+
+    /**
+     * The menu item is the panel's switch under another name: it flips the
+     * document in front. Photoshop draws the check mark as it was last told
+     * to, so a click that could not be honoured -- nothing open -- has to be
+     * followed by putting the mark back where it was.
+     */
+    private async toggleFromMenu(): Promise<void> {
+        const result = await this.setRecording(!this.recordingWanted());
+        if (!result.ok) {
+            this.log.warn("Menu toggle: " + result.error);
+            await this.refreshMenu();
+        }
     }
 
     /**
@@ -516,8 +540,8 @@ class FRecordPlugin {
 
     private async installMenu(): Promise<void> {
         try {
-            const config = this.configStore.get();
-            await this.generator.addMenuItem(MENU_ID, this.menuLabel(config), true, config.enabled);
+            this.menuChecked = this.recordingWanted();
+            await this.generator.addMenuItem(MENU_ID, this.menuLabel(this.configStore.get()), true, this.menuChecked);
         } catch (e) {
             // A missing menu is cosmetic; never let it stop the plugin loading.
             this.log.warn("Could not install the Photoshop menu item: " + errText(e));
@@ -530,11 +554,73 @@ class FRecordPlugin {
 
     private async refreshMenu(): Promise<void> {
         try {
-            const config = this.configStore.get();
-            await this.generator.toggleMenu(MENU_ID, true, config.enabled, this.menuLabel(config));
+            this.menuChecked = this.recordingWanted();
+            await this.generator.toggleMenu(MENU_ID, true, this.menuChecked, this.menuLabel(this.configStore.get()));
         } catch (e) {
             /* cosmetic */
         }
+    }
+
+    /** The switch of the document in front: on when it has a recording that is switched on. */
+    private recordingWanted(): boolean {
+        return this.current !== null && this.current.manifest.recording;
+    }
+
+    /**
+     * Points the scheduler and the menu's check mark at the document in
+     * front, and tells the panel. Every path that changes which document or
+     * which switch is in front ends here, so the three cannot disagree.
+     */
+    private applyRecordingState(): void {
+        const wanted = this.recordingWanted();
+        this.scheduler.setEnabled(wanted && !this.docTooSmall);
+        if (wanted !== this.menuChecked) {
+            // Never rejects: it swallows its own failure as cosmetic.
+            this.refreshMenu();
+        }
+        this.broadcastState();
+    }
+
+    /**
+     * Flips the switch of a document's recording and remembers that it was
+     * decided, so auto-start leaves that document alone for the rest of the
+     * run. The manifest is written at once: the switch has to survive a
+     * quit that comes before the next flush.
+     */
+    private setSessionRecording(session: ResolvedSession, documentId: number, recording: boolean): void {
+        this.decidedThisRun[documentId] = true;
+        if (session.manifest.recording !== recording) {
+            session.manifest.recording = recording;
+            this.flushManifest();
+            this.log.info(
+                (recording ? "Recording switched on for '" : "Recording switched off for '") +
+                    session.manifest.docName + "' (" + session.sessionId + ")"
+            );
+        }
+        this.applyRecordingState();
+    }
+
+    /**
+     * Auto-start's one go at the document in front: a recording that exists
+     * but is switched off is switched on, the first time this run sees it.
+     * A document with no recording at all was already given one by
+     * resolveSession under the same rule, so there is nothing to do here for
+     * it; and a canvas too small to record is left for the resize that will
+     * make it big enough.
+     */
+    private autoStartIfDue(config: Config, documentId: number, session: ResolvedSession): void {
+        if (session.manifest.recording || !this.mayStartRecording(config, documentId)) {
+            return;
+        }
+        this.decidedThisRun[documentId] = true;
+        session.manifest.recording = true;
+        this.flushManifest();
+        this.log.info("Auto-start switched recording on for '" + session.manifest.docName + "'");
+    }
+
+    /** Whether resolveSession may open a recording for a document that has none. */
+    private mayStartRecording(config: Config, documentId: number): boolean {
+        return config.autoStart && !this.docTooSmall && !this.decidedThisRun[documentId];
     }
 
     /* --------------------------------------------------------- document */
@@ -562,8 +648,7 @@ class FRecordPlugin {
         this.lastFrameAt = null;
         this.loggedGeometryFor = null;
         this.scheduler.discardPending();
-        this.scheduler.setEnabled(false);
-        this.broadcastState();
+        this.applyRecordingState();
     }
 
     private async syncActiveDocument(): Promise<void> {
@@ -738,8 +823,10 @@ class FRecordPlugin {
         }
 
         this.scheduler.setMinInterval(config.minIntervalMs);
-        this.scheduler.setEnabled(config.enabled && this.current !== null && !this.docTooSmall);
-        this.broadcastState();
+        if (this.current !== null) {
+            this.autoStartIfDue(config, info.id, this.current);
+        }
+        this.applyRecordingState();
     }
 
     /**
@@ -857,10 +944,10 @@ class FRecordPlugin {
             file: this.docFile,
             bounds: this.docBounds
         };
-        // Only create a folder when recording is actually on -- browsing a
-        // document with the switch off should leave nothing behind.
-        const allowCreate = config.enabled && config.autoStartNewDocuments && !this.docTooSmall;
-        const outcome = await this.resolver.resolve(doc, config, allowCreate);
+        // Only auto-start opens a folder from here -- browsing a document
+        // nobody asked to record should leave nothing behind. The panel's
+        // switch opens one through setRecording.
+        const outcome = await this.resolver.resolve(doc, config, this.mayStartRecording(config, documentId));
 
         this.current = outcome.session;
         this.resumeCandidates = outcome.candidates;
@@ -891,7 +978,10 @@ class FRecordPlugin {
         const documentId = this.activeDocumentId;
         const bounds = this.docBounds;
 
-        if (!config.enabled || !session || documentId === null || !bounds) {
+        // The switch is not checked here: the scheduler is only enabled
+        // while it is on, and is disabled in the same breath as it is
+        // switched off. What can still be missing is the document.
+        if (!session || documentId === null || !bounds) {
             return;
         }
         // Its folder is in transit; a frame written now would land in
@@ -939,8 +1029,9 @@ class FRecordPlugin {
             }
             return;
         }
-        // Recording may have been switched off while Photoshop was rendering.
-        if (!this.configStore.get().enabled || this.current !== session) {
+        // Recording may have been switched off, or the document left, while
+        // Photoshop was rendering.
+        if (!session.manifest.recording || this.current !== session) {
             return;
         }
         // The canvas may also have been resized while it rendered. `bounds` is
@@ -1042,7 +1133,7 @@ class FRecordPlugin {
             const config = this.configStore.get();
             const session = this.current;
 
-            if (config.enabled && session && this.lastFrameAt !== null && !this.scheduler.isPaused()) {
+            if (session && session.manifest.recording && this.lastFrameAt !== null && !this.scheduler.isPaused()) {
                 const idleMs = config.idleTimeoutMinutes * 60 * 1000;
                 const withinIdleWindow = config.idleTimeoutMinutes === 0 || Date.now() - this.lastFrameAt <= idleMs;
                 if (withinIdleWindow) {
@@ -1114,6 +1205,7 @@ class FRecordPlugin {
             sessionState = {
                 sessionId: session.sessionId,
                 folder: session.folder,
+                recording: session.manifest.recording,
                 frameCount: session.manifest.frameCount,
                 timeSpentSec: session.manifest.timeSpentSec,
                 lastFrameAt: this.lastFrameAt,
@@ -1168,12 +1260,8 @@ class FRecordPlugin {
             this.current = null;
             this.needsResolve = true;
         }
-        if (after.enabled !== before.enabled || after.language !== before.language) {
+        if (after.language !== before.language) {
             await this.refreshMenu();
-        }
-        if (after.enabled && !before.enabled) {
-            this.scheduler.resume();
-            this.needsResolve = true;
         }
         if (after.checkForUpdates !== before.checkForUpdates) {
             // Switching it off must clear the banner, not just stop refreshing
@@ -1204,7 +1292,12 @@ class FRecordPlugin {
      * would leave a half session behind -- the orphaned folder the delete
      * existed to remove.
      */
-    private async deleteCurrentSession(config: Config, sessionId: string): Promise<CommandResult> {
+    private async deleteCurrentSession(config: Config, session: ResolvedSession): Promise<CommandResult> {
+        const sessionId = session.sessionId;
+        // Whether a fresh take is opened in its place is the deleted take's
+        // own switch: nobody deletes a recording they had switched off in
+        // order to start another.
+        const reopen = session.manifest.recording && !this.docTooSmall;
         this.current = null;
         this.lastFrameAt = null;
         this.loggedGeometryFor = null;
@@ -1235,7 +1328,7 @@ class FRecordPlugin {
             // PSD and in the resolver's map alike. Forget it and stamp the
             // replacement, rather than leaving a dangling id behind.
             this.resolver.forgetDocument(documentId);
-            if (config.enabled && !this.docTooSmall) {
+            if (reopen) {
                 const doc: DocInfo = { id: documentId, file: this.docFile, bounds: this.docBounds };
                 const fresh = await this.resolver.startFresh(doc, config);
                 // Left uninstalled if the user has moved to another document
@@ -1245,14 +1338,13 @@ class FRecordPlugin {
             }
         }
 
-        this.scheduler.setEnabled(config.enabled && this.current !== null && !this.docTooSmall);
         if (this.current === null) {
             // Recording is off, so no folder was created to replace the one
             // deleted. Re-resolve promptly rather than at the next heartbeat,
             // so the panel stops showing a document with no recording sooner.
             this.scheduleResync();
         }
-        this.broadcastState();
+        this.applyRecordingState();
         return {
             ok: true,
             sessions: this.listSessions(config),
@@ -1507,6 +1599,44 @@ class FRecordPlugin {
         return { ok: true, sessions: sessions };
     }
 
+    /**
+     * The panel's switch, and the menu's. Flips the recording of the
+     * document in front; with no recording yet, on opens one, exactly as
+     * the resume offer's "start fresh" does, and off has nothing to do.
+     */
+    private async setRecording(recording: boolean): Promise<CommandResult> {
+        const documentId = this.activeDocumentId;
+        if (documentId === null) {
+            return { ok: false, error: "No open document" };
+        }
+        if (this.current !== null) {
+            this.setSessionRecording(this.current, documentId, recording);
+            return { ok: true, state: this.buildState() };
+        }
+        if (!recording) {
+            return { ok: true, state: this.buildState() };
+        }
+        if (this.docTooSmall) {
+            return { ok: false, error: "The canvas is too small to record" };
+        }
+        return this.startRecordingFresh(this.configStore.get(), documentId);
+    }
+
+    /**
+     * Opens a brand new recording for the document in front, switched on,
+     * whatever the document pointed at before. Shared by the switch and the
+     * resume offer's "start fresh".
+     */
+    private async startRecordingFresh(config: Config, documentId: number): Promise<CommandResult> {
+        this.flushManifest();
+        const doc: DocInfo = { id: documentId, file: this.docFile, bounds: this.docBounds };
+        const fresh = await this.resolver.startFresh(doc, config);
+        if (this.installSession(documentId, fresh, null)) {
+            this.setSessionRecording(fresh, documentId, true);
+        }
+        return { ok: true, state: this.buildState() };
+    }
+
     private async handleCommand(command: Command): Promise<CommandResult> {
         const config = this.configStore.get();
 
@@ -1517,6 +1647,9 @@ class FRecordPlugin {
             case "setConfig":
                 await this.applyConfigPatch(command.patch || {});
                 return { ok: true, state: this.buildState() };
+
+            case "setRecording":
+                return this.setRecording(!!command.recording);
 
             case "pause":
                 this.scheduler.pause(command.reason || "Paused");
@@ -1537,7 +1670,7 @@ class FRecordPlugin {
                     return { ok: false, error: busy };
                 }
                 if (this.current && this.current.sessionId === command.sessionId) {
-                    return this.deleteCurrentSession(config, command.sessionId);
+                    return this.deleteCurrentSession(config, this.current);
                 }
                 deleteSession(config.processImageFolderPath, command.sessionId);
                 this.index.remove(command.sessionId);
@@ -1627,11 +1760,11 @@ class FRecordPlugin {
                 this.flushManifest();
                 const doc: DocInfo = { id: documentId, file: this.docFile, bounds: this.docBounds };
                 const adopted = await this.resolver.adopt(doc, config, command.sessionId);
-                if (!this.installSession(documentId, adopted, adopted.manifest.lastModifiedAt || null)) {
-                    return { ok: true, state: this.buildState() };
+                if (this.installSession(documentId, adopted, adopted.manifest.lastModifiedAt || null)) {
+                    // Continuing a recording is asking for it to be recorded
+                    // into, whatever its switch said when it was last left.
+                    this.setSessionRecording(adopted, documentId, true);
                 }
-                this.scheduler.setEnabled(config.enabled && !this.docTooSmall);
-                this.broadcastState();
                 return { ok: true, state: this.buildState() };
             }
 
@@ -1640,15 +1773,7 @@ class FRecordPlugin {
                 if (documentId === null) {
                     return { ok: false, error: "No open document" };
                 }
-                this.flushManifest();
-                const doc: DocInfo = { id: documentId, file: this.docFile, bounds: this.docBounds };
-                const fresh = await this.resolver.startFresh(doc, config);
-                if (!this.installSession(documentId, fresh, null)) {
-                    return { ok: true, state: this.buildState() };
-                }
-                this.scheduler.setEnabled(config.enabled && !this.docTooSmall);
-                this.broadcastState();
-                return { ok: true, state: this.buildState() };
+                return this.startRecordingFresh(config, documentId);
             }
 
             case "dismissUpdate": {

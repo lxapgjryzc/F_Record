@@ -32,7 +32,7 @@ const PANEL_HEADER = "x-f-record-client";
 const PANEL_VALUE = "f-record-panel";
 
 function makeState(overrides) {
-    return { generator: { running: true }, config: { enabled: false }, session: null, ...overrides };
+    return { generator: { running: true }, config: { autoStart: false }, session: null, ...overrides };
 }
 
 /**
@@ -312,19 +312,19 @@ test("an unknown path is a 404 rather than a hint about what does exist", async 
 /* ------------------------------------------------------------------ state */
 
 test("the state endpoint answers with whatever the plug-in currently is", async (t) => {
-    let enabled = false;
-    const h = await startBridge(t, { state: () => makeState({ config: { enabled } }) });
+    let autoStart = false;
+    const h = await startBridge(t, { state: () => makeState({ config: { autoStart } }) });
 
     const first = await request(h.port, "GET", "/state", { token: h.info.token });
     assert.equal(first.status, 200);
-    assert.equal(first.body.config.enabled, false);
+    assert.equal(first.body.config.autoStart, false);
     assert.match(first.headers["content-type"], /application\/json/);
 
     // Read afresh each time rather than cached: the panel asks after a command
     // and has to see the result of it.
-    enabled = true;
+    autoStart = true;
     const second = await request(h.port, "GET", "/state", { token: h.info.token });
-    assert.equal(second.body.config.enabled, true);
+    assert.equal(second.body.config.autoStart, true);
 
     const withQuery = await request(h.port, "GET", "/state?t=123", { token: h.info.token });
     assert.equal(withQuery.status, 200, "a cache-busting query string is not a different route");

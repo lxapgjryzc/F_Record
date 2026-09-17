@@ -398,9 +398,10 @@ export class SessionResolver {
     /**
      * Finds -- or, when allowed, creates -- the session for a document.
      *
-     * `allowCreate` is false when the user has not opted into recording new
-     * documents; the caller then gets `candidates` to offer in the panel
-     * instead of silently starting a recording.
+     * `allowCreate` is false when nothing has asked for this document to be
+     * recorded -- auto-start is off, or has had its one chance at it; the
+     * caller then gets `candidates` to offer in the panel instead of
+     * silently starting a recording.
      */
     async resolve(doc: DocInfo, config: Config, allowCreate: boolean): Promise<ResolveOutcome> {
         const filePath = documentFilePath(doc.file);

@@ -230,3 +230,13 @@ test("a hand-edited clipboard size is read as its digits, and nonsense lands on 
     assert.equal(normalizeClipboardResolution(undefined), "1080");
     assert.equal(normalizeClipboardResolution(null), "1080");
 });
+
+test("the global switch and the second auto-start of protocol 13 are dropped", () => {
+    // Both were in every stored config until the switch became the canvas's
+    // own. Carrying them would leave doctor.ps1 reporting a switch nothing
+    // reads.
+    const out = normalizeConfig(legacyConfig({ enabled: true, autoStartNewDocuments: false }));
+    assert.equal("enabled" in out, false);
+    assert.equal("autoStartNewDocuments" in out, false);
+    assert.equal(out.autoStart, false, "the one that stays is read as before");
+});

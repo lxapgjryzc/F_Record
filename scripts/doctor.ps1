@@ -210,8 +210,7 @@ if (Test-Path -LiteralPath $dataDir) {
         try {
             $config = Get-Content -LiteralPath $configFile -Raw | ConvertFrom-Json
             $framesRoot = $config.processImageFolderPath
-            Write-Host ("    Recording       {0}" -f $(if ($config.enabled) { 'on' } else { 'off' })) `
-                -ForegroundColor $(if ($config.enabled) { 'Green' } else { 'DarkGray' })
+            # The recording switch is per canvas (session.json), not in the config.
             Write-Host ("    Auto-start      {0}" -f $(if ($config.autoStart) { 'on' } else { 'off' })) -ForegroundColor DarkGray
             Write-Host ("    Resolution      {0}p, quality {1}, interval {2} ms" -f $config.resolution, $config.quality, $config.minIntervalMs) -ForegroundColor DarkGray
             Write-Host ("    Frames folder   {0}" -f $framesRoot) -ForegroundColor DarkGray

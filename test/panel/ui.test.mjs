@@ -356,3 +356,69 @@ test("a toast with no action gets a close button, since errors never fade", () =
     click(closers[0]);
     assert.deepEqual(dismissed, [1]);
 });
+
+/* ------------------------------------------------------- the record icon */
+
+/** A state with a recording switched on and nothing in its way. */
+function recordingState(overrides = {}) {
+    return {
+        session: { sessionId: "s1", recording: true },
+        document: { id: 1, tooSmall: false },
+        health: { capturing: false, consecutiveFailures: 0, pausedReason: null },
+        ...overrides
+    };
+}
+
+test("the dot reads grey, red or yellow, and always has a word for it", () => {
+    // Grey: nothing to read, nothing open, or the canvas's switch off.
+    assert.deepEqual(ui.recordingIndicator(null), { tone: "off", capturing: false, labelKey: "record.off" });
+    assert.equal(ui.recordingIndicator(recordingState({ session: null })).tone, "off");
+    assert.equal(ui.recordingIndicator(recordingState({ session: { sessionId: "s1", recording: false } })).tone, "off");
+
+    // Red: the recording is free to write, pulsing while it does.
+    assert.deepEqual(ui.recordingIndicator(recordingState()), { tone: "on", capturing: false, labelKey: "record.on" });
+    assert.equal(
+        ui.recordingIndicator(recordingState({ health: { capturing: true, consecutiveFailures: 0, pausedReason: null } }))
+            .capturing,
+        true
+    );
+
+    // Yellow: switched on, but something is in the way -- each with its own
+    // word, and the pause's word first since it is the one with a button.
+    const paused = recordingState({
+        document: { id: 1, tooSmall: true },
+        health: { capturing: false, consecutiveFailures: 3, pausedReason: "Disk full" }
+    });
+    assert.deepEqual(ui.recordingIndicator(paused), { tone: "problem", capturing: false, labelKey: "record.paused" });
+    assert.equal(ui.recordingIndicator(recordingState({ document: { id: 1, tooSmall: true } })).labelKey, "doc.tooSmall");
+    assert.equal(ui.recordingIndicator(recordingState({ document: null })).tone, "on", "no document row, no size to judge");
+    assert.equal(
+        ui.recordingIndicator(recordingState({ health: { capturing: false, consecutiveFailures: 1, pausedReason: null } }))
+            .labelKey,
+        "record.failing"
+    );
+});
+
+test("the record dot is a plain dot, coloured by its class and nothing else", () => {
+    const live = mount(dom, h(ui.RecordDot, { indicator: { tone: "on", capturing: true, labelKey: "record.on" } }));
+    const dot = query(live, ".record-dot");
+    assert.equal(dot.nodeName, "SPAN", "not the icon: no drawing in it");
+    assert.equal(dot.getAttribute("class"), "record-dot on capturing");
+    assert.equal(dot.getAttribute("aria-hidden"), "true", "the word next to it is what a screen reader gets");
+    assert.equal(textOf(dot), "");
+
+    const still = query(mount(dom, h(ui.RecordDot, { indicator: { tone: "problem", capturing: false, labelKey: "record.paused" } })), ".record-dot");
+    assert.equal(still.getAttribute("class"), "record-dot problem");
+});
+
+test("the panel icon is the dock icon's drawing in one colour, and says nothing about state", () => {
+    const icon = query(mount(dom, h(ui.PanelIcon, {})), "svg");
+    assert.equal(icon.getAttribute("class"), "panel-icon");
+    assert.equal(icon.getAttribute("width"), "16", "a default size");
+    assert.equal(icon.getAttribute("aria-hidden"), "true", "a mark, so decorative");
+    assert.equal(query(icon, "rect").getAttribute("stroke"), "currentColor", "the frame takes the one colour");
+    assert.equal(query(icon, "circle").getAttribute("fill"), "currentColor", "and so does the dot");
+    assert.equal(query(icon, "title"), null);
+
+    assert.equal(query(mount(dom, h(ui.PanelIcon, { size: 18 })), "svg").getAttribute("width"), "18");
+});

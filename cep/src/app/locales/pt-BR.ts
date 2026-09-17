@@ -23,12 +23,11 @@ export const dict: Record<string, string> = {
     "record.paused": "Pausado",
     "record.start": "Iniciar gravação",
     "record.stop": "Parar gravação",
+    "record.failing": "As capturas estão falhando; tentando de novo",
 
     "doc.title": "Documento",
     "doc.none": "Nenhum documento aberto",
     "doc.tooSmall": "A tela é pequena demais para gravar",
-    "doc.noSession": "Não está sendo gravado",
-    "doc.startForThis": "Gravar este documento",
 
     "stat.frames": "Quadros",
     "stat.time": "Tempo gasto",
@@ -203,11 +202,8 @@ export const dict: Record<string, string> = {
     "settings.idle": "Tempo ocioso",
     "settings.idle.hint": "Parar de contar o tempo depois deste período sem desenhar.",
     "settings.idle.off": "Nunca",
-    "settings.autoStart": "Começar a gravar ao abrir o Photoshop",
-    "settings.autoStart.hint":
-        "A gravação roda em segundo plano; este painel não precisa ficar aberto.",
-    "settings.autoNew": "Gravar novos documentos automaticamente",
-    "settings.autoNew.hint": "Quando desligado, cada documento precisa ser iniciado à mão.",
+    "settings.autoStart": "Começar a gravar ao abrir uma tela",
+    "settings.autoStart.hint": "Cada tela guarda a própria chave de gravação. Desligada, ela fica assim durante esta sessão do Photoshop; a próxima abertura volta a ligá-la.",
     "settings.language": "Idioma",
     "settings.language.auto": "Igual ao Photoshop",
     "settings.runtime": "Ambiente",

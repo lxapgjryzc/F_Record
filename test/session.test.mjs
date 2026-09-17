@@ -40,9 +40,7 @@ function setup(runId = "run-1") {
     const processImageFolderPath = path.join(temp.dir, "processImages");
     fs.mkdirSync(processImageFolderPath, { recursive: true });
     const config = {
-        enabled: true,
         autoStart: false,
-        autoStartNewDocuments: true,
         processImageFolderPath,
         resolution: "1080",
         quality: 70,

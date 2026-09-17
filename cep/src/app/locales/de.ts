@@ -23,12 +23,11 @@ export const dict: Record<string, string> = {
     "record.paused": "Angehalten",
     "record.start": "Aufnahme starten",
     "record.stop": "Aufnahme beenden",
+    "record.failing": "Aufnahmen schlagen fehl; neuer Versuch",
 
     "doc.title": "Dokument",
     "doc.none": "Kein Dokument geöffnet",
     "doc.tooSmall": "Arbeitsfläche ist zu klein für eine Aufnahme",
-    "doc.noSession": "Wird nicht aufgenommen",
-    "doc.startForThis": "Dieses Dokument aufnehmen",
 
     "stat.frames": "Bilder",
     "stat.time": "Arbeitszeit",
@@ -203,11 +202,8 @@ export const dict: Record<string, string> = {
     "settings.idle": "Leerlaufzeit",
     "settings.idle.hint": "Die Zeitzählung nach so langer Zeit ohne Zeichnen anhalten.",
     "settings.idle.off": "Nie",
-    "settings.autoStart": "Aufnahme beim Start von Photoshop beginnen",
-    "settings.autoStart.hint":
-        "Die Aufnahme läuft im Hintergrund; dieses Bedienfeld muss nicht geöffnet bleiben.",
-    "settings.autoNew": "Neue Dokumente automatisch aufnehmen",
-    "settings.autoNew.hint": "Wenn aus, muss jedes Dokument von Hand gestartet werden.",
+    "settings.autoStart": "Aufnahme beim Öffnen einer Arbeitsfläche beginnen",
+    "settings.autoStart.hint": "Jede Arbeitsfläche hat ihren eigenen Aufnahmeschalter. Wird er ausgeschaltet, bleibt er für diese Photoshop-Sitzung aus; beim nächsten Start beginnt die Aufnahme wieder.",
     "settings.language": "Sprache",
     "settings.language.auto": "Wie Photoshop",
     "settings.runtime": "Laufzeitumgebung",

@@ -201,13 +201,11 @@ test("a generator too old to know about the copy size shows the default rather t
 
 /* ------------------------------------------------------------- starting up */
 
-test("both automatic starts are switches, and each says what it does", () => {
-    const { container, patches } = settings({ autoStart: false, autoStartNewDocuments: true });
+test("auto-start is one switch, and it says what it does to each canvas", () => {
+    const { container, patches } = settings({ autoStart: false });
     click(switchFor(container, "settings.autoStart"));
-    click(switchFor(container, "settings.autoNew"));
-    assert.deepEqual(patches, [{ autoStart: true }, { autoStartNewDocuments: false }]);
+    assert.deepEqual(patches, [{ autoStart: true }]);
     assert.ok(textOf(container).indexOf(t("settings.autoStart.hint")) !== -1);
-    assert.ok(textOf(container).indexOf(t("settings.autoNew.hint")) !== -1);
 });
 
 /* ------------------------------------------------------------ the stale rule */

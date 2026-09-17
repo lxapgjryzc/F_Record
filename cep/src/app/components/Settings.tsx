@@ -219,16 +219,6 @@ export function Settings(props: SettingsProps): JSX.Element {
                     />
                 </div>
                 <Hint>{t("settings.autoStart.hint")}</Hint>
-
-                <div class="row">
-                    <Switch
-                        checked={config.autoStartNewDocuments}
-                        disabled={props.disabled}
-                        label={t("settings.autoNew")}
-                        onChange={(next) => props.onPatch({ autoStartNewDocuments: next })}
-                    />
-                </div>
-                <Hint>{t("settings.autoNew.hint")}</Hint>
             </div>
 
             {/*

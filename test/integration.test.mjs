@@ -190,7 +190,7 @@ test("the plug-in starts, publishes a bridge, and serves its state", async (t) =
     const state = await request(h.bridge, "GET", "/state");
     assert.equal(state.status, 200);
     assert.equal(state.body.generator.photoshopVersion, "27.2.0");
-    assert.equal(state.body.config.enabled, false, "recording is off until asked for");
+    assert.equal(state.body.config.autoStart, false, "nothing starts recording until asked");
     assert.equal(state.body.session, null, "and no folder has been created");
 });
 
@@ -263,12 +263,11 @@ test("enabling recording and drawing writes a real, complete JPEG", async (t) =>
     const h = await startPlugin();
     t.after(() => h.cleanup());
 
-    const enabled = await request(h.bridge, "POST", "/command", {
-        type: "setConfig",
-        patch: { enabled: true, minIntervalMs: 200 }
-    });
+    await request(h.bridge, "POST", "/command", { type: "setConfig", patch: { minIntervalMs: 200 } });
+    const enabled = await request(h.bridge, "POST", "/command", { type: "setRecording", recording: true });
     assert.equal(enabled.body.ok, true);
     assert.ok(enabled.body.state.session, "a session folder is created once recording starts");
+    assert.equal(enabled.body.state.session.recording, true, "and the switch is the recording's own");
 
     const folder = enabled.body.state.session.folder;
     assert.ok(fs.existsSync(path.join(folder, "session.json")), "the manifest lives inside the folder");
@@ -297,7 +296,7 @@ test("the pixmap is requested clipped to the canvas, and downscaled", async (t) 
 
     await request(h.bridge, "POST", "/command", {
         type: "setConfig",
-        patch: { enabled: true, minIntervalMs: 200, resolution: "360" }
+        patch: { autoStart: true, minIntervalMs: 200, resolution: "360" }
     });
     h.ps.emit("imageChanged", { id: 1, layers: [{ pixels: true }] });
     await waitFor(() => (h.ps.calls.pixmap.length > 0 ? true : null));
@@ -329,7 +328,7 @@ test("a burst of change events produces one capture, not one per event", async (
 
     await request(h.bridge, "POST", "/command", {
         type: "setConfig",
-        patch: { enabled: true, minIntervalMs: 5000 }
+        patch: { autoStart: true, minIntervalMs: 5000 }
     });
 
     for (let i = 0; i < 40; i++) {
@@ -347,7 +346,7 @@ test("changes to documents that are not frontmost are ignored", async (t) => {
 
     await request(h.bridge, "POST", "/command", {
         type: "setConfig",
-        patch: { enabled: true, minIntervalMs: 100 }
+        patch: { autoStart: true, minIntervalMs: 100 }
     });
     const before = h.ps.calls.pixmap.length;
 
@@ -363,7 +362,7 @@ test("events with no pixel changes do not trigger a capture", async (t) => {
 
     await request(h.bridge, "POST", "/command", {
         type: "setConfig",
-        patch: { enabled: true, minIntervalMs: 100 }
+        patch: { autoStart: true, minIntervalMs: 100 }
     });
     const before = h.ps.calls.pixmap.length;
 
@@ -389,7 +388,7 @@ test("Save As hands the renamed document a copy and leaves the original whole", 
 
     const started = await request(h.bridge, "POST", "/command", {
         type: "setConfig",
-        patch: { enabled: true, minIntervalMs: 100 }
+        patch: { autoStart: true, minIntervalMs: 100 }
     });
     const original = started.body.state.session;
 
@@ -456,7 +455,7 @@ test("a plain save keeps writing into the same session folder", async (t) => {
 
     const started = await request(h.bridge, "POST", "/command", {
         type: "setConfig",
-        patch: { enabled: true, minIntervalMs: 100 }
+        patch: { autoStart: true, minIntervalMs: 100 }
     });
     const sessionId = started.body.state.session.sessionId;
     const folder = started.body.state.session.folder;
@@ -482,7 +481,7 @@ test("pause and resume are honoured, so export can stop competing with capture",
 
     await request(h.bridge, "POST", "/command", {
         type: "setConfig",
-        patch: { enabled: true, minIntervalMs: 100 }
+        patch: { autoStart: true, minIntervalMs: 100 }
     });
     await request(h.bridge, "POST", "/command", { type: "pause", reason: "Exporting" });
 
@@ -505,7 +504,7 @@ test("sessions can be listed and deleted over the bridge", async (t) => {
 
     await request(h.bridge, "POST", "/command", {
         type: "setConfig",
-        patch: { enabled: true, minIntervalMs: 100 }
+        patch: { autoStart: true, minIntervalMs: 100 }
     });
     h.ps.emit("imageChanged", { id: 1, layers: [{ pixels: true }] });
     await waitFor(async () => {
@@ -530,7 +529,7 @@ test("deleting the take in progress wipes it and starts a fresh one", async (t) 
 
     const started = await request(h.bridge, "POST", "/command", {
         type: "setConfig",
-        patch: { enabled: true, minIntervalMs: 100 }
+        patch: { autoStart: true, minIntervalMs: 100 }
     });
     const folder = started.body.state.session.folder;
     const sessionId = started.body.state.session.sessionId;
@@ -577,7 +576,7 @@ test("archiving the take in progress is undone by the next frame", async (t) => 
 
     const started = await request(h.bridge, "POST", "/command", {
         type: "setConfig",
-        patch: { enabled: true, minIntervalMs: 100 }
+        patch: { autoStart: true, minIntervalMs: 100 }
     });
     const sessionId = started.body.state.session.sessionId;
     const folder = started.body.state.session.folder;
@@ -693,7 +692,7 @@ test("the take in progress is never moved out from under the encoder", async (t)
 
     const started = await request(h.bridge, "POST", "/command", {
         type: "setConfig",
-        patch: { enabled: true, minIntervalMs: 100 }
+        patch: { autoStart: true, minIntervalMs: 100 }
     });
     const sessionId = started.body.state.session.sessionId;
     const refused = await request(h.bridge, "POST", "/command", {
@@ -754,7 +753,7 @@ test("state and frame updates are pushed over SSE rather than polled for", async
 
     await request(h.bridge, "POST", "/command", {
         type: "setConfig",
-        patch: { enabled: true, minIntervalMs: 100 }
+        patch: { autoStart: true, minIntervalMs: 100 }
     });
     h.ps.emit("imageChanged", { id: 1, layers: [{ pixels: true }] });
 
@@ -770,7 +769,7 @@ test("a document below the minimum canvas size is not recorded", async (t) => {
     // 800x600 = 480,000 px; require more than that.
     const result = await request(h.bridge, "POST", "/command", {
         type: "setConfig",
-        patch: { enabled: true, minCanvasPixels: 1000000 }
+        patch: { autoStart: true, minCanvasPixels: 1000000 }
     });
 
     assert.equal(result.body.state.document.tooSmall, true);
@@ -888,7 +887,7 @@ test("a batch delete removes recordings and their documents, and skips the take 
 
     const started = await request(h.bridge, "POST", "/command", {
         type: "setConfig",
-        patch: { enabled: true, minIntervalMs: 100 }
+        patch: { autoStart: true, minIntervalMs: 100 }
     });
     const current = started.body.state.session.sessionId;
 
@@ -967,7 +966,7 @@ test("packing refuses a place it cannot write to, and never packs the take in pr
     writeFinishedSession(root, done, { docName: "done" });
     const started = await request(h.bridge, "POST", "/command", {
         type: "setConfig",
-        patch: { enabled: true, minIntervalMs: 100 }
+        patch: { autoStart: true, minIntervalMs: 100 }
     });
     const current = started.body.state.session.sessionId;
 

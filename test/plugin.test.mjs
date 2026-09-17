@@ -277,21 +277,24 @@ test("a menu that cannot be installed is a warning, not a failed load", async (t
     assert.equal(state.ok, true, "and the plug-in is running");
 });
 
-test("auto-start arms recording without waiting for the panel", async (t) => {
-    const h = await startPlugin(t, { config: { autoStart: true, enabled: false } });
+test("auto-start opens a recording for the canvas in front without waiting for the panel", async (t) => {
+    const h = await startPlugin(t, { config: { autoStart: true } });
 
-    // The artist ticked "start recording as soon as Photoshop opens"; making
+    // The artist ticked "start recording when a canvas is opened"; making
     // them open the panel first would defeat the point of it.
     assert.match(h.logs.join("\n"), /Auto-start is on/);
     const state = await command(h, { type: "ping" });
-    assert.equal(state.state.config.enabled, true);
+    assert.ok(state.state.session, "a recording was opened for the document in front");
+    assert.equal(state.state.session.recording, true);
 });
 
 test("a document that was being recorded at the last quit is recorded again at the next launch", async (t) => {
     const OLD = "2026-01-01-00-00-00-000-abcdef00";
     const h = await startPlugin(t, {
-        // Recording was on when Photoshop quit; auto-start was never ticked.
-        config: { autoStart: false, enabled: true },
+        // Auto-start was never ticked; the recording's own switch was on
+        // when Photoshop quit -- written by a version that had no switch in
+        // the manifest at all, which reads as on.
+        config: { autoStart: false },
         before: (env) => seedSession(env, OLD),
         photoshop: { storedSessionId: OLD }
     });
@@ -302,7 +305,7 @@ test("a document that was being recorded at the last quit is recorded again at t
     // say here: it is off, and it only ever turns recording on.
     assert.doesNotMatch(h.logs.join("\n"), /Auto-start is on/);
     const state = await command(h, { type: "ping" });
-    assert.equal(state.state.config.enabled, true);
+    assert.equal(state.state.session.recording, true);
     assert.equal(state.state.session.sessionId, OLD, "picked up where it left off");
 
     // Which is only worth anything if the next stroke lands in that folder.
@@ -368,23 +371,52 @@ test("a start-up that fails outright is reported to Photoshop's own log", async 
 
 /* ------------------------------------------------------------- the menu */
 
-test("the Photoshop menu item toggles recording", async (t) => {
+test("the Photoshop menu item toggles the document in front", async (t) => {
     const h = await startPlugin(t);
     assert.equal(h.ps.calls.menu.length, 1);
     const menuId = h.ps.calls.menu[0].id;
+    assert.equal(h.ps.calls.menu[0].checked, false, "nothing is being recorded yet");
 
     h.ps.emit("generatorMenuChanged", { generatorMenuChanged: { name: menuId } });
     await settle();
 
     const state = await command(h, { type: "ping" });
-    assert.equal(state.state.config.enabled, true, "the menu is a second switch for the same setting");
+    assert.equal(state.state.session.recording, true, "the menu is the panel's switch under another name");
+    assert.deepEqual(
+        h.ps.calls.toggles.map((call) => call.checked),
+        [true],
+        "and the check mark follows the switch"
+    );
 
     // Someone else's menu item, and a malformed event: neither is ours.
     h.ps.emit("generatorMenuChanged", { generatorMenuChanged: { name: "com.other.plugin" } });
     h.ps.emit("generatorMenuChanged", {});
     h.ps.emit("generatorMenuChanged", null);
     await settle();
-    assert.equal((await command(h, { type: "ping" })).state.config.enabled, true, "unchanged");
+    assert.equal((await command(h, { type: "ping" })).state.session.recording, true, "unchanged");
+
+    // A second click switches the same recording off, and keeps it.
+    h.ps.emit("generatorMenuChanged", { generatorMenuChanged: { name: menuId } });
+    await settle();
+    const off = (await command(h, { type: "ping" })).state.session;
+    assert.equal(off.sessionId, state.state.session.sessionId);
+    assert.equal(off.recording, false);
+    assert.deepEqual(h.ps.calls.toggles.map((call) => call.checked), [true, false]);
+});
+
+test("a menu click with nothing open is reported, and the check mark put back", async (t) => {
+    const h = await startPlugin(t, {
+        photoshop: { documentInfo: () => Promise.reject(new Error("no document")) }
+    });
+    const menuId = h.ps.calls.menu[0].id;
+
+    h.ps.emit("generatorMenuChanged", { generatorMenuChanged: { name: menuId } });
+    await settle();
+
+    // Photoshop has drawn the mark as ticked on the click; the plug-in has
+    // nothing to tick it for and says so.
+    assert.match(h.logs.join("\n"), /Menu toggle: No open document/);
+    assert.deepEqual(h.ps.calls.toggles.map((call) => call.checked), [false]);
 });
 
 test("a menu toggle that fails is reported rather than lost", async (t) => {
@@ -394,10 +426,10 @@ test("a menu toggle that fails is reported rather than lost", async (t) => {
     const menuId = h.ps.calls.menu[0].id;
 
     // refreshMenu failing is cosmetic and swallowed; what must not be lost is
-    // the setting change itself.
+    // the switch itself.
     h.ps.emit("generatorMenuChanged", { generatorMenuChanged: { name: menuId } });
     await settle();
-    assert.equal((await command(h, { type: "ping" })).state.config.enabled, true);
+    assert.equal((await command(h, { type: "ping" })).state.session.recording, true);
 });
 
 test("the menu label follows the panel's language", async (t) => {
@@ -406,6 +438,11 @@ test("the menu label follows the panel's language", async (t) => {
 
     const other = await startPlugin(t, { config: { language: "zh-CN" } });
     assert.notEqual(other.ps.calls.menu[0].label, "F_Record: Record");
+
+    // And is relabelled the moment the language changes, not at the next launch.
+    await command(other, { type: "setConfig", patch: { language: "en" } });
+    assert.equal(other.ps.calls.toggles.length, 1);
+    assert.equal(other.ps.calls.toggles[0].label, "F_Record: Record");
 });
 
 /* --------------------------------------------------------------- events */
@@ -797,7 +834,7 @@ test("recording switched off while Photoshop was rendering costs that frame", as
 
     // The artist hit the switch while the render was in flight. Writing the
     // frame now would put one more in a recording they have just stopped.
-    await command(h, { type: "setConfig", patch: { enabled: false } });
+    await command(h, { type: "setRecording", recording: false });
     release();
     await settle(30);
 
@@ -1174,13 +1211,19 @@ test("deleting the take in progress with recording off leaves nothing behind", a
     await settle(40);
     const sessionId = await h.sessionId();
 
-    await command(h, { type: "setConfig", patch: { enabled: false } });
+    await command(h, { type: "setRecording", recording: false });
     const result = await command(h, { type: "deleteSession", sessionId });
 
     // With the switch off there is no folder to open in its place, so the
     // panel has to stop showing a recording for this document.
     assert.equal(result.ok, true);
     assert.equal(result.state.session, null);
+
+    // And auto-start, though on, does not open one either: the artist has
+    // spoken for this document, for this run.
+    await command(h, { type: "setConfig", patch: { quality: 80 } });
+    await settle(20);
+    assert.equal((await command(h, { type: "ping" })).state.session, null);
 });
 
 test("a delete that the filesystem refuses is reported rather than claimed", async (t) => {
@@ -1262,17 +1305,18 @@ test("a menu toggle that cannot be applied is reported", async (t) => {
     const menuId = h.ps.calls.menu[0].id;
     t.after(clearFaults);
 
-    // The menu item is a second switch for the same setting, and it goes
-    // through the same code the panel does. A failure there has nowhere else
-    // to be reported: there is no dialog to put it in.
+    // The menu item is the panel's switch under another name, and it goes
+    // through the same code the panel does. A failure there -- the folder
+    // for the new recording cannot be written -- has nowhere else to be
+    // reported: there is no dialog to put it in.
     setFault("writeFileSync", () => {
-        throw fsError("EACCES", "config.json is read-only");
+        throw fsError("EACCES", "the frames folder is read-only");
     });
     h.ps.emit("generatorMenuChanged", { generatorMenuChanged: { name: menuId } });
     await settle(40);
     clearFaults();
 
-    assert.match(h.logs.join("\n"), /Menu toggle failed: .*config\.json is read-only/);
+    assert.match(h.logs.join("\n"), /Menu toggle failed: .*the frames folder is read-only/);
 });
 
 /* ------------------------------------------------ a canvas with no size at all */
@@ -1884,4 +1928,142 @@ test("a recording claimed by a document that is no longer open can be adopted", 
     const adopted = await command(h, { type: "adoptSession", documentId: 2, sessionId: first });
     assert.equal(adopted.ok, true);
     assert.equal(adopted.state.session.sessionId, first);
+});
+
+/* --------------------------------------------------- the canvas's own switch */
+
+/** Polls the state until the live recording holds `count` frames, or gives up. */
+async function framesReach(h, count) {
+    const deadline = Date.now() + 8000;
+    let session = (await command(h, { type: "ping" })).state.session;
+    while ((!session || session.frameCount < count) && Date.now() < deadline) {
+        await settle(1);
+        session = (await command(h, { type: "ping" })).state.session;
+    }
+    return session;
+}
+
+test("switching a document off keeps its recording, and on again continues it", async (t) => {
+    const h = await startPlugin(t, { config: { autoStart: true, minIntervalMs: 200 } });
+    await settle();
+    h.ps.emit("imageChanged", { id: 1, layers: [{ id: 2, pixels: true }] });
+    const one = await framesReach(h, 1);
+    assert.equal(one.frameCount, 1);
+
+    const off = await command(h, { type: "setRecording", recording: false });
+    assert.equal(off.ok, true);
+    assert.equal(off.state.session.sessionId, one.sessionId, "the recording stays the document's");
+    assert.equal(off.state.session.recording, false);
+    const onDisk = JSON.parse(fs.readFileSync(path.join(one.folder, "session.json"), "utf8"));
+    assert.equal(onDisk.recording, false, "written at once, so a quit does not lose the choice");
+
+    // Strokes while it is off go nowhere.
+    h.ps.emit("imageChanged", { id: 1, layers: [{ id: 2, pixels: true }] });
+    await settle(60);
+    assert.equal((await command(h, { type: "ping" })).state.session.frameCount, 1);
+
+    // On again picks up in the same folder, one frame further on.
+    const on = await command(h, { type: "setRecording", recording: true });
+    assert.equal(on.state.session.recording, true);
+    h.ps.emit("imageChanged", { id: 1, layers: [{ id: 2, pixels: true }] });
+    const two = await framesReach(h, 2);
+    assert.equal(two.sessionId, one.sessionId);
+    assert.equal(two.frameCount, 2);
+});
+
+test("switching on a document with no recording opens one, on", async (t) => {
+    const h = await startPlugin(t);
+    await settle();
+    assert.equal((await command(h, { type: "ping" })).state.session, null, "precondition: auto-start is off");
+
+    // Off with nothing to switch off is nothing, not an error.
+    const nothing = await command(h, { type: "setRecording", recording: false });
+    assert.equal(nothing.ok, true);
+    assert.equal(nothing.state.session, null);
+
+    const on = await command(h, { type: "setRecording", recording: true });
+    assert.equal(on.ok, true);
+    assert.equal(on.state.session.recording, true);
+    assert.ok(fs.existsSync(path.join(on.state.session.folder, "session.json")));
+    // Asked for what it already is: the same recording, nothing opened.
+    const again = await command(h, { type: "setRecording", recording: true });
+    assert.equal(again.state.session.sessionId, on.state.session.sessionId);
+    assert.equal(h.logs.filter((line) => /Started fresh session/.test(line)).length, 1);
+});
+
+test("switching on with nothing open, or a canvas too small, is refused", async (t) => {
+    const closed = await startPlugin(t, {
+        photoshop: { documentInfo: () => Promise.reject(new Error("no document")) }
+    });
+    await settle(30);
+    assert.deepEqual(await command(closed, { type: "setRecording", recording: true }), {
+        ok: false,
+        error: "No open document"
+    });
+
+    const scratch = await startPlugin(t, { config: { minCanvasPixels: 1000000 } });
+    await settle();
+    assert.equal((await command(scratch, { type: "ping" })).state.document.tooSmall, true);
+    assert.deepEqual(await command(scratch, { type: "setRecording", recording: true }), {
+        ok: false,
+        error: "The canvas is too small to record"
+    });
+});
+
+test("auto-start switches a recording that was left off back on, once per run", async (t) => {
+    const OLD = "2026-01-01-00-00-00-000-abcdef03";
+    const h = await startPlugin(t, {
+        config: { autoStart: true },
+        before: (env) => seedSession(env, OLD, { recording: false }),
+        photoshop: { storedSessionId: OLD }
+    });
+    await settle(40);
+
+    assert.match(h.logs.join("\n"), /Auto-start switched recording on for 'dragon'/);
+    const state = await command(h, { type: "ping" });
+    assert.equal(state.state.session.sessionId, OLD, "the same recording, not a new one");
+    assert.equal(state.state.session.recording, true);
+
+    // Switched off by hand: the syncs that follow -- a settings change here,
+    // the heartbeat in real life -- leave it off. The artist has spoken.
+    await command(h, { type: "setRecording", recording: false });
+    await command(h, { type: "setConfig", patch: { quality: 80 } });
+    await settle(20);
+    assert.equal((await command(h, { type: "ping" })).state.session.recording, false);
+});
+
+test("with auto-start off, a recording left off stays off, and nothing is written into it", async (t) => {
+    const OLD = "2026-01-01-00-00-00-000-abcdef04";
+    const h = await startPlugin(t, {
+        config: { autoStart: false },
+        before: (env) => seedSession(env, OLD, { recording: false }),
+        photoshop: { storedSessionId: OLD }
+    });
+    await settle(40);
+
+    const state = await command(h, { type: "ping" });
+    assert.equal(state.state.session.sessionId, OLD, "the recording is still the document's");
+    assert.equal(state.state.session.recording, false);
+
+    h.ps.emit("imageChanged", { id: 1, layers: [{ id: 2, pixels: true }] });
+    await settle(60);
+    assert.equal((await command(h, { type: "ping" })).state.session.frameCount, 0);
+    assert.deepEqual(h.ps.calls.pixmap, [], "Photoshop was not even asked");
+});
+
+test("continuing an earlier recording switches it on, whatever it was left at", async (t) => {
+    const h = await startPlugin(t, { config: { autoStart: true } });
+    await settle();
+    const first = (await command(h, { type: "ping" })).state.session;
+    await command(h, { type: "setRecording", recording: false });
+
+    const fresh = await command(h, { type: "newSession", documentId: 1 });
+    assert.equal(fresh.state.session.recording, true, "a fresh take is opened to be recorded into");
+    assert.notEqual(fresh.state.session.sessionId, first.sessionId);
+
+    const adopted = await command(h, { type: "adoptSession", documentId: 1, sessionId: first.sessionId });
+    assert.equal(adopted.state.session.sessionId, first.sessionId);
+    assert.equal(adopted.state.session.recording, true, "continuing it is asking for it");
+    const onDisk = JSON.parse(fs.readFileSync(path.join(first.folder, "session.json"), "utf8"));
+    assert.equal(onDisk.recording, true);
 });
